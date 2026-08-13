@@ -18,7 +18,7 @@ const RE_SUBSTITUTO = /^SUBSTITUTO\s*:\s*(\d+)\s*-\s*(.+)$/;
 const RE_FILIAL = /FILIAL\s*:\s*(\d+)\s*-\s*(.+?)(?:PERÍODO|$)/;
 const RE_PERIODO = /PERÍODO\s*:\s*(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{2}\/\d{2}\/\d{4})/;
 const RE_TOTAL_GERAL = /TOTAL GERAL\s+(\d+,\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/;
-const RE_CODIGO_LOCAL = /(\d\.\d{4}\.\d{4}\.\d{4}\.[\d-]+|\d{15,}-\d{4}\.\d{4}|\d{9,}-\d{4}\.\d{4})/;
+const RE_CODIGO_LOCAL = /(\d\.\d{4}\.\d{4}\.\d{4}\.[\d-]+|\d{9,}-\d{4}\.\d{4}|\d{8,}-\d{8,}|\d{8,}-\d{4,})/;
 const RE_NUMEROS_FIM = /([A-Z])\s+(\d+,\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$/;
 
 // Lista de motivos conhecidos (todas as filiais)
@@ -40,7 +40,11 @@ const MOTIVOS = [
   "CASAMENTO",
   "FÉRIAS",
   "SOLICITAÇÃO DO CLIENTE",
+  "INSAL 20%",
+  "INSALUBRIDADE",
+  "INSALUBRIDADE 20%",
 ];
+
 
 // ---- Funções auxiliares ----
 
