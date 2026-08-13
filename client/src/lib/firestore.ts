@@ -59,6 +59,9 @@ export async function salvarExtras(extras: Omit<Extra, "id">[]): Promise<string[
   return ids;
 }
 
+// Alias para compatibilidade
+export const salvarExtrasEmLote = salvarExtras;
+
 export async function carregarExtras(): Promise<Extra[]> {
   const q = query(collection(db, "extras"), orderBy("dataISO", "desc"));
   const snapshot = await getDocs(q);
@@ -83,6 +86,9 @@ export async function salvarImportacao(importacao: Omit<Importacao, "id">): Prom
   await setDoc(ref, dadosLimpos);
   return ref.id;
 }
+
+// Alias para compatibilidade
+export const registrarImportacao = salvarImportacao;
 
 export async function carregarImportacoes(): Promise<Importacao[]> {
   const q = query(collection(db, "importacoes"), orderBy("dataImportacao", "desc"));
