@@ -1,0 +1,26 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "extras",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dataISO", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importacoes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dataImportacao", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditoria",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dataHora", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

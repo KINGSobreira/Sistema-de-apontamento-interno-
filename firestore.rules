@@ -1,0 +1,73 @@
+rules_version = '2';
+
+// ============================================
+// Controle de Extras — Regras de segurança do Firestore
+// ============================================
+// - Apenas usuários autenticados acessam os dados
+// - Usuários comuns (conferência): somente leitura
+// - Administradores: leitura e escrita completas
+// ============================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Função: usuário autenticado
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    // Função: verifica se o usuário é administrador
+    function isAdmin() {
+      return autenticado() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.perfil == 'admin' &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true;
+    }
+
+    // Função: usuário ativo (qualquer perfil)
+    function usuarioAtivo() {
+      return autenticado() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true;
+    }
+
+    // ---- Extras ----
+    // Leitura: qualquer usuário ativo | Escrita: somente admin
+    match /extras/{id} {
+      allow read: if usuarioAtivo();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---- Importações ----
+    match /importacoes/{id} {
+      allow read: if usuarioAtivo();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---- Configurações ----
+    match /configuracoes/{id} {
+      allow read: if usuarioAtivo();
+      allow write: if isAdmin();
+    }
+
+    // ---- Auditoria ----
+    // Leitura: somente admin | Criação: qualquer usuário ativo (registra a própria ação)
+    match /auditoria/{id} {
+      allow read: if isAdmin();
+      allow create: if usuarioAtivo();
+      allow update, delete: if false;
+    }
+
+    // ---- Usuários (perfis) ----
+    // O usuário pode ler o próprio perfil; admin lê e gerencia todos
+    match /usuarios/{id} {
+      allow read: if autenticado() && (request.auth.uid == id || isAdmin());
+      // Primeiro usuário do sistema pode criar o próprio perfil (bootstrap)
+      allow create: if autenticado() && (request.auth.uid == id || isAdmin());
+      allow update: if isAdmin() || (autenticado() && request.auth.uid == id &&
+        // usuário comum só pode atualizar o próprio ultimoAcesso
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ultimoAcesso']));
+      allow delete: if isAdmin();
+    }
+  }
+}
