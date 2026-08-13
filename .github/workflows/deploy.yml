@@ -17,14 +17,11 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Instalar pnpm
-        run: npm install -g pnpm
-
       - name: Instalar dependências
-        run: pnpm install
+        run: npm install --legacy-peer-deps
 
       - name: Gerar build
-        run: pnpm build
+        run: npm run build
         env:
           VITE_FIREBASE_API_KEY: AIzaSyB01rRG-VNsNnloEGMrxmB-khoX3f7l8qo
           VITE_FIREBASE_AUTH_DOMAIN: controle-extras-dc02e.firebaseapp.com
