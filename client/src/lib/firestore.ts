@@ -14,8 +14,6 @@ import {
   query,
   orderBy,
   limit,
-  Timestamp,
-  DocumentData,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type { Extra, Importacao, Configuracoes, LogAuditoria, Usuario } from "./types";
@@ -114,7 +112,7 @@ export async function carregarLogs(limite: number = 500): Promise<LogAuditoria[]
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as LogAuditoria));
 }
 
-// ---- Usuários ----
+// ---- Usuários (Perfis) ----
 
 export async function carregarUsuarios(): Promise<Usuario[]> {
   const snapshot = await getDocs(collection(db, "usuarios"));
@@ -144,4 +142,19 @@ export async function atualizarUsuario(id: string, dados: Partial<Usuario>): Pro
 
 export async function excluirUsuario(id: string): Promise<void> {
   await deleteDoc(doc(db, "usuarios", id));
+}
+
+// ---- Funções de compatibilidade (usadas pelo AuthContext) ----
+
+export async function carregarPerfil(uid: string): Promise<Usuario | null> {
+  return carregarUsuario(uid);
+}
+
+export async function salvarPerfil(uid: string, dados: Omit<Usuario, "id">): Promise<void> {
+  return criarUsuario(uid, dados);
+}
+
+export async function registrarAcesso(uid: string): Promise<void> {
+  const ref = doc(db, "usuarios", uid);
+  await updateDoc(ref, { ultimoAcesso: new Date().toISOString() });
 }
