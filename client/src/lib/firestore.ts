@@ -33,14 +33,41 @@ function limparCampos<T extends Record<string, unknown>>(obj: T): Partial<T> {
 
 export const CONFIG_PADRAO: Configuracoes = {
   classificacoes: [
-    { codigo: 1, local: "Capital", periodo: "Diurno", descricao: "Hora extra diurna capital", valor: 145.72 },
-    { codigo: 2, local: "Capital", periodo: "Noturno", descricao: "Hora extra noturna capital", valor: 170.54 },
-    { codigo: 3, local: "Interior", periodo: "Diurno", descricao: "Hora extra diurna interior", valor: 136.72 },
-    { codigo: 4, local: "Interior", periodo: "Noturno", descricao: "Hora extra noturna interior", valor: 161.54 },
+    // ============================================
+    // VIGILÂNCIA — Servnac 01, RN 02, SP 03, Verde
+    // ============================================
+    { codigo: 1, local: "Capital", periodo: "Diurno", descricao: "EXTRA CAPITAL DIURNO", valor: 145.72 },
+    { codigo: 2, local: "Capital", periodo: "Noturno", descricao: "EXTRA CAPITAL NOTURNO", valor: 170.54 },
+    { codigo: 3, local: "Interior", periodo: "Diurno", descricao: "EXTRA INTERIOR DIURNO", valor: 136.72 },
+    { codigo: 4, local: "Interior", periodo: "Noturno", descricao: "EXTRA INTERIOR NOTURNO", valor: 161.54 },
+    { codigo: 5, local: "ADM", periodo: "Diurno", descricao: "HORA EXTRA ADM", valor: 8.27 },
+    
+    // ============================================
+    // SERVNAC FACILITIES 04
+    // ============================================
+    { codigo: 6, local: "Facilities", periodo: "Noturno", descricao: "PORTEIROS NOTURNOS HORÁRIO COMERCIAL 11HRS UNIMED", valor: 227.78 },
+    { codigo: 7, local: "Facilities", periodo: "Noturno", descricao: "PORTEIROS NOTURNOS SDF 100% 11HRS UNIMED", valor: 260.33 },
+    { codigo: 8, local: "Facilities", periodo: "Diurno", descricao: "PORTEIROS DIURNOS HORÁRIO COMERCIAL 11HRS UNIMED", valor: 187.82 },
+    { codigo: 9, local: "Facilities", periodo: "Diurno", descricao: "PORTEIROS DIURNO SDF 100% 11HRS UNIMED", valor: 214.65 },
+    { codigo: 10, local: "Facilities", periodo: "Diurno", descricao: "PORTEIRO DIURNO H.COMERCIAL 8 UNIMED", valor: 136.56 },
+    { codigo: 11, local: "Facilities", periodo: "Diurno", descricao: "PORTEIRO DIURNO SDF 8 HORAS UNIMED", valor: 156.08 },
+    { codigo: 20, local: "Facilities", periodo: "Diurno", descricao: "PORTEIRO DIURNO FACILITES 4 HORAS", valor: 76.43 },
+    { codigo: 21, local: "Facilities", periodo: "Diurno", descricao: "PORTEIRO DIURNO FACILITES 6HRS", valor: 102.91 },
+    { codigo: 22, local: "Facilities", periodo: "Diurno", descricao: "PORTEIRO DIURNO FACILITES 6HRS", valor: 102.91 },
+    
+    // ============================================
+    // SERVNAC TERCEIRIZAÇÃO 06
+    // ============================================
+    { codigo: 30, local: "Terceirização", periodo: "Diurno", descricao: "ASG DIURNO FACILITES 8HRS", valor: 97.97 },
+    { codigo: 31, local: "Terceirização", periodo: "Diurno", descricao: "ASG DIURNO FACILITES 4HRS", valor: 38.14 },
+    { codigo: 32, local: "Terceirização", periodo: "Diurno", descricao: "ASG DIURNO FACILITES 6HRS", valor: 84.30 },
+    { codigo: 33, local: "Terceirização", periodo: "Diurno", descricao: "PORTEIRO DIURNO FACILITES 8HS", valor: 102.91 },
+    { codigo: 34, local: "Terceirização", periodo: "Diurno", descricao: "PORTEIRO DIURNO FACILITES 6HS", valor: 88.00 },
   ],
   regrasAtraso: { atencaoMin: 2, atrasoMin: 4 },
   dataInicioAcompanhamento: "2026-05-22",
 };
+
 
 // ---- Extras ----
 
