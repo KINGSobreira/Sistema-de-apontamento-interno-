@@ -16,7 +16,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import type { Extra, Importacao, Configuracoes, LogAuditoria, Usuario } from "./types";
+import type { Extra, Importacao, Configuracoes, LogAuditoria, Usuario, StatusPagamento } from "./types";
 
 // Remove campos undefined de um objeto (Firestore não aceita undefined)
 function limparCampos<T extends Record<string, unknown>>(obj: T): Partial<T> {
@@ -59,7 +59,6 @@ export async function salvarExtras(extras: Omit<Extra, "id">[]): Promise<string[
   return ids;
 }
 
-// Alias para compatibilidade
 export const salvarExtrasEmLote = salvarExtras;
 
 export async function carregarExtras(): Promise<Extra[]> {
@@ -72,6 +71,11 @@ export async function atualizarExtra(id: string, dados: Partial<Extra>): Promise
   const ref = doc(db, "extras", id);
   const dadosLimpos = limparCampos(dados);
   await updateDoc(ref, dadosLimpos);
+}
+
+export async function atualizarStatusExtra(id: string, status: StatusPagamento): Promise<void> {
+  const ref = doc(db, "extras", id);
+  await updateDoc(ref, { status });
 }
 
 export async function excluirExtra(id: string): Promise<void> {
@@ -87,7 +91,6 @@ export async function salvarImportacao(importacao: Omit<Importacao, "id">): Prom
   return ref.id;
 }
 
-// Alias para compatibilidade
 export const registrarImportacao = salvarImportacao;
 
 export async function carregarImportacoes(): Promise<Importacao[]> {
@@ -163,7 +166,7 @@ export async function excluirUsuario(id: string): Promise<void> {
   await deleteDoc(doc(db, "usuarios", id));
 }
 
-// ---- Funções de compatibilidade (usadas pelo AuthContext) ----
+// ---- Funções de compatibilidade ----
 
 export async function carregarPerfil(uid: string): Promise<Usuario | null> {
   return carregarUsuario(uid);
