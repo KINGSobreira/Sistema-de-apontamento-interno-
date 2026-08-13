@@ -29,6 +29,19 @@ function limparCampos<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return limpo;
 }
 
+// ---- Configuração padrão ----
+
+export const CONFIG_PADRAO: Configuracoes = {
+  classificacoes: [
+    { codigo: 1, local: "Capital", periodo: "Diurno", descricao: "Hora extra diurna capital", valor: 145.72 },
+    { codigo: 2, local: "Capital", periodo: "Noturno", descricao: "Hora extra noturna capital", valor: 170.54 },
+    { codigo: 3, local: "Interior", periodo: "Diurno", descricao: "Hora extra diurna interior", valor: 136.72 },
+    { codigo: 4, local: "Interior", periodo: "Noturno", descricao: "Hora extra noturna interior", valor: 161.54 },
+  ],
+  regrasAtraso: { atencaoMin: 2, atrasoMin: 4 },
+  dataInicioAcompanhamento: "2026-05-22",
+};
+
 // ---- Extras ----
 
 export async function salvarExtras(extras: Omit<Extra, "id">[]): Promise<string[]> {
