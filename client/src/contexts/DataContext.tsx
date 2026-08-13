@@ -1,81 +1,79 @@
 // ============================================
-// Controle de Extras — Contexto de dados (extras, config, importações)
+// Controle de Extras — Contexto de Dados
 // ============================================
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
-import type { Extra, Configuracoes, Importacao } from "@/lib/types";
-import {
-  carregarExtras,
-  carregarConfiguracoes,
-  carregarImportacoes,
-  CONFIG_PADRAO,
-} from "@/lib/firestore";
+import { createContext, useContext, useState, useEffect, useMemo, ReactNode } from "react";
+import type { Extra, Importacao, Configuracoes } from "@/lib/types";
+import { carregarExtras, carregarImportacoes, carregarConfiguracoes, CONFIG_PADRAO } from "@/lib/firestore";
 import { useAuth } from "./AuthContext";
 
-interface DataContextData {
+interface DataContextType {
   extras: Extra[];
-  configuracoes: Configuracoes;
   importacoes: Importacao[];
-  carregandoDados: boolean;
+  configuracoes: Configuracoes;
+  carregando: boolean;
   recarregar: () => Promise<void>;
-  setExtras: React.Dispatch<React.SetStateAction<Extra[]>>;
-  setConfiguracoes: React.Dispatch<React.SetStateAction<Configuracoes>>;
 }
 
-const DataContext = createContext<DataContextData>({} as DataContextData);
+const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const { usuario } = useAuth();
   const [extras, setExtras] = useState<Extra[]>([]);
-  const [configuracoes, setConfiguracoes] = useState<Configuracoes>(CONFIG_PADRAO);
   const [importacoes, setImportacoes] = useState<Importacao[]>([]);
-  const [carregandoDados, setCarregandoDados] = useState(false);
+  const [configuracoes, setConfiguracoes] = useState<Configuracoes>(CONFIG_PADRAO);
+  const [carregando, setCarregando] = useState(true);
 
-  const recarregar = useCallback(async () => {
-    if (!usuario) return;
-    setCarregandoDados(true);
-    try {
-      const [ex, cfg, imp] = await Promise.all([
-        carregarExtras(),
-        carregarConfiguracoes(),
-        carregarImportacoes(),
-      ]);
-      setExtras(ex);
-      setConfiguracoes(cfg);
-      setImportacoes(imp);
-    } catch (e) {
-      console.error("Erro ao carregar dados:", e);
-    } finally {
-      setCarregandoDados(false);
+  const carregar = async () => {
+    if (!usuario) {
+      setCarregando(false);
+      return;
     }
-  }, [usuario]);
+    
+    try {
+      setCarregando(true);
+      const [extrasData, importacoesData, configData] = await Promise.all([
+        carregarExtras(),
+        carregarImportacoes(),
+        carregarConfiguracoes(),
+      ]);
+      
+      setExtras(extrasData);
+      setImportacoes(importacoesData);
+      // Se não tem configuração salva, usa a padrão
+      setConfiguracoes(configData || CONFIG_PADRAO);
+    } catch (error) {
+      console.error("Erro ao carregar dados:", error);
+      // Em caso de erro, usa configuração padrão
+      setConfiguracoes(CONFIG_PADRAO);
+    } finally {
+      setCarregando(false);
+    }
+  };
 
   useEffect(() => {
-    if (usuario) {
-      recarregar();
-    } else {
-      setExtras([]);
-      setImportacoes([]);
-    }
-  }, [usuario, recarregar]);
+    carregar();
+  }, [usuario]);
+
+  const value = useMemo(() => ({
+    extras,
+    importacoes,
+    configuracoes,
+    carregando,
+    recarregar: carregar,
+  }), [extras, importacoes, configuracoes, carregando]);
 
   return (
-    <DataContext.Provider
-      value={{
-        extras,
-        configuracoes,
-        importacoes,
-        carregandoDados,
-        recarregar,
-        setExtras,
-        setConfiguracoes,
-      }}
-    >
+    <DataContext.Provider value={value}>
       {children}
     </DataContext.Provider>
   );
 }
 
 export function useData() {
-  return useContext(DataContext);
+  const context = useContext(DataContext);
+  if (context === undefined) {
+    throw new Error("useData deve ser usado dentro de DataProvider");
+  }
+  return context;
 }
