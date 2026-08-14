@@ -18,6 +18,12 @@ export function formatarNumero(valor: number, casas = 2): string {
   });
 }
 
+export function formatarData(data: string): string {
+  if (!data) return "—";
+  const [dia, mes, ano] = data.split("/");
+  return `${dia}/${mes}/${ano}`;
+}
+
 export function formatarDataISO(iso?: string): string {
   if (!iso) return "—";
   const [a, m, d] = iso.split("-");
