@@ -17,6 +17,41 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
+// Mapeamento de classificações para nomes descritivos
+const NOMES_CLASSIFICACOES: Record<number, string> = {
+  // Vigilância (Segurança, Verde, RN, SP)
+  1: "Capital Diurno",
+  2: "Capital Noturno",
+  3: "Interior Diurno",
+  4: "Interior Noturno",
+  5: "Hora Extra ADM",
+  
+  // Facilities
+  6: "Porteiro Noturno Comercial",
+  7: "Porteiro Noturno SDF",
+  8: "Porteiro Diurno Comercial",
+  9: "Porteiro Diurno SDF",
+  10: "Porteiro Diurno 8h",
+  11: "Porteiro Diurno SDF 8h",
+  14: "Facilities Diurno",
+  16: "Porteiro Diurno Comercial",
+  20: "Porteiro Diurno 4h",
+  21: "Porteiro Diurno 6h",
+  22: "Porteiro Diurno 6h",
+  
+  // Terceirização
+  30: "ASG Diurno 8h",
+  31: "ASG Diurno 4h",
+  32: "ASG Diurno 6h",
+  33: "Porteiro Diurno 8h",
+  34: "Porteiro Diurno 6h",
+};
+
+// Função para obter nome da classificação
+function getNomeClassificacao(codigo: number): string {
+  return NOMES_CLASSIFICACOES[codigo] || `Classificação ${codigo}`;
+}
+
 type TipoRelatorio =
   | "financeiro"
   | "operacional"
@@ -81,7 +116,7 @@ export default function Relatorios() {
         }
         Array.from(porMes.entries()).sort().forEach(([m, v]) => linhas.push([m, formatarMoeda(v)]));
         linhas.push([], ["POR CLASSIFICAÇÃO", ""]);
-        agregarPor(filtrados, "classificacao").forEach(([c, d]) => linhas.push([`Classificação ${c}`, formatarMoeda(d.valor)]));
+        agregarPor(filtrados, "classificacao").forEach(([c, d]) => linhas.push([getNomeClassificacao(Number(c)), formatarMoeda(d.valor)]));
         return { cabecalho: ["Indicador", "Valor"], linhas };
       }
       case "operacional": {
@@ -110,133 +145,4 @@ export default function Relatorios() {
         };
       case "posto":
         return {
-          cabecalho: ["Posto", "Extras", "Unidades", "Valor total"],
-          linhas: agregarPor(filtrados, "posto").map(([m, d]) => [m, d.qtd, formatarNumero(d.unidades), formatarMoeda(d.valor)]),
-        };
-      case "atrasadas": {
-        const atrasadas = filtrados.filter(
-          (e) => e.diasParaLancamento !== undefined && e.diasParaLancamento >= configuracoes.regrasAtraso.atrasoMin
-        );
-        return {
-          cabecalho: ["Data", "DataInput", "Dias", "Substituto", "Posto", "Usuário", "Valor"],
-          linhas: atrasadas.map((e) => [
-            e.data, e.dataInput || "", e.diasParaLancamento || 0, e.substituto, e.posto, e.usuario || "—", formatarMoeda(e.totalGeral),
-          ]),
-        };
-      }
-      case "divergencias": {
-        const div = filtrados.filter((e) => e.status === "divergencia" || e.origem !== "pdf_excel");
-        return {
-          cabecalho: ["Data", "Substituto", "Posto", "Motivo", "Origem", "Status", "Valor"],
-          linhas: div.map((e) => [e.data, e.substituto, e.posto, e.motivo, e.origem, e.status, formatarMoeda(e.totalGeral)]),
-        };
-      }
-    }
-  };
-
-  const gerarExcel = (tipo: TipoRelatorio) => {
-    setGerando(tipo + "-xlsx");
-    try {
-      const { cabecalho, linhas } = montarDados(tipo);
-      const nome = TIPOS.find((t) => t.id === tipo)!.nome;
-      const dados = [cabecalho, ...linhas];
-      const ws = XLSX.utils.aoa_to_sheet(dados);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Relatório");
-      XLSX.writeFile(wb, `relatorio_${tipo}_${hojeISO()}.xlsx`);
-      registrarAcao(`Gerou relatório "${nome}" em Excel`, "Relatórios");
-      toast.success("Relatório Excel gerado.");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao gerar Excel.");
-    } finally {
-      setGerando(null);
-    }
-  };
-
-  const gerarPdf = (tipo: TipoRelatorio) => {
-    setGerando(tipo + "-pdf");
-    try {
-      const { cabecalho, linhas } = montarDados(tipo);
-      const nome = TIPOS.find((t) => t.id === tipo)!.nome;
-      const doc = new jsPDF({ orientation: cabecalho.length > 5 ? "landscape" : "portrait" });
-
-      // Cabeçalho
-      doc.setFillColor(0, 90, 57);
-      doc.rect(0, 0, doc.internal.pageSize.getWidth(), 22, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text("Controle de Extras", 14, 10);
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(nome, 14, 17);
-      doc.setFontSize(8);
-      doc.text(`Gerado em ${new Date().toLocaleString("pt-BR")}`, doc.internal.pageSize.getWidth() - 14, 10, { align: "right" });
-      doc.text(`${filtrados.length} registros no período filtrado`, doc.internal.pageSize.getWidth() - 14, 17, { align: "right" });
-
-      autoTable(doc, {
-        head: [cabecalho],
-        body: linhas.map((l) => l.map((c) => String(c ?? ""))),
-        startY: 28,
-        styles: { fontSize: 8.5, cellPadding: 2.5 },
-        headStyles: { fillColor: [0, 90, 57], textColor: 255, fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [240, 250, 245] },
-      });
-
-      doc.save(`relatorio_${tipo}_${hojeISO()}.pdf`);
-      registrarAcao(`Gerou relatório "${nome}" em PDF`, "Relatórios");
-      toast.success("Relatório PDF gerado.");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao gerar PDF.");
-    } finally {
-      setGerando(null);
-    }
-  };
-
-  return (
-    <div className="space-y-5">
-      <PageHeader titulo="Relatórios" descricao="Gere relatórios gerenciais com os filtros aplicados e exporte em PDF ou Excel." />
-
-      <BarraFiltros filtros={filtros} onChange={setFiltros} compacto />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {TIPOS.map((t) => (
-          <div key={t.id} className="rounded-xl border bg-card p-5 shadow-sm flex flex-col">
-            <h3 className="font-display text-[15px] font-bold">{t.nome}</h3>
-            <p className="mt-1 text-[12.5px] text-muted-foreground leading-relaxed flex-1">{t.descricao}</p>
-            <div className="mt-4 flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => gerarPdf(t.id)}
-                disabled={gerando !== null || filtrados.length === 0}
-                className="gap-1.5 flex-1 text-red-700 border-red-200 hover:bg-red-50"
-              >
-                {gerando === t.id + "-pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                PDF
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => gerarExcel(t.id)}
-                disabled={gerando !== null || filtrados.length === 0}
-                className="gap-1.5 flex-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-              >
-                {gerando === t.id + "-xlsx" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
-                Excel
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {filtrados.length === 0 && (
-        <p className="text-center text-sm text-muted-foreground py-6">
-          Nenhum registro disponível com os filtros atuais. Importe dados ou ajuste os filtros.
-        </p>
-      )}
-    </div>
-  );
-}
+          cab
