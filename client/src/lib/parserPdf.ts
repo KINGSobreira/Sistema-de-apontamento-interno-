@@ -1,27 +1,32 @@
 // ============================================
 // Controle de Extras — Parser PDF (Mapa de Cobertura)
+// Suporta TODAS as filiais e TODOS os períodos
 // ============================================
 
 import * as pdfjsLib from "pdfjs-dist";
 import type { RegistroImportado } from "./types";
 
-// Configurar worker do PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url
 ).toString();
 
-// ---- Constantes de parsing ----
+// ---- Regexes ----
 
+// Aceita qualquer data no formato DD/MM/AAAA
 const RE_DATA = /^(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(.*)$/;
 const RE_SUBSTITUTO = /^SUBSTITUTO\s*:\s*(\d+)\s*-\s*(.+)$/;
 const RE_FILIAL = /FILIAL\s*:\s*(\d+)\s*-\s*(.+?)(?:PERÍODO|$)/;
 const RE_PERIODO = /PERÍODO\s*:\s*(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{2}\/\d{2}\/\d{4})/;
 const RE_TOTAL_GERAL = /TOTAL GERAL\s+(\d+,\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/;
-const RE_CODIGO_LOCAL = /(\d\.\d{4}\.\d{4}\.\d{4}\.[\d-]+|\d{9,}-\d{4}\.\d{4}|\d{8,}-\d{8,}|\d{8,}-\d{4,})/;
+
+// Aceita vários formatos de código de local
+const RE_CODIGO_LOCAL = /(\d{1,3}\.\d{4}\.\d{4}\.\d{4}\.[\d-]+|\d{9,}-\d{4}\.\d{4}|\d{8,}-\d{8,}|\d{8,}-\d{4,}|\d{4,}-\d{4,})/;
+
 const RE_NUMEROS_FIM = /([A-Z])\s+(\d+,\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$/;
 
-// Lista de motivos conhecidos (todas as filiais)
+// ---- Motivos conhecidos (todas as filiais) ----
+
 const MOTIVOS = [
   "AFASTAMENTO SUP. 15D",
   "AFASTAMENTO ATÉ 15D",
@@ -43,8 +48,10 @@ const MOTIVOS = [
   "INSAL 20%",
   "INSALUBRIDADE",
   "INSALUBRIDADE 20%",
+  "ATESTADO MEDICO",
+  "ATESTADO MÉDICO",
+  "COBERTURA ENTRE FILIAIS",
 ];
-
 
 // ---- Funções auxiliares ----
 
@@ -60,7 +67,7 @@ function dataParaISO(data: string): string {
   return `${ano}-${mes}-${dia}`;
 }
 
-// ---- Extração de texto do PDF ----
+// ---- Extração de texto ----
 
 async function extrairLinhas(file: File): Promise<string[]> {
   const arrayBuffer = await file.arrayBuffer();
@@ -71,7 +78,6 @@ async function extrairLinhas(file: File): Promise<string[]> {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     
-    // Agrupar por linha (coordenada Y)
     const porLinha = new Map<number, { x: number; str: string }[]>();
     
     for (const item of content.items) {
@@ -83,7 +89,6 @@ async function extrairLinhas(file: File): Promise<string[]> {
       porLinha.get(y)!.push({ x, str: item.str });
     }
     
-    // Ordenar por Y (descendente) e depois por X (ascendente)
     const ys = Array.from(porLinha.keys()).sort((a, b) => b - a);
     for (const y of ys) {
       const partes = porLinha.get(y)!.sort((a, b) => a.x - b.x);
@@ -95,7 +100,7 @@ async function extrairLinhas(file: File): Promise<string[]> {
   return linhas;
 }
 
-// ---- Parsing de um registro ----
+// ---- Parsing de registro ----
 
 interface RegistroParcial {
   data: string;
@@ -109,14 +114,14 @@ function tentarParseRegistro(
   corpo: string,
   substitutoAtual: string
 ): RegistroImportado | null {
-  // Tentar encontrar os números no final
+  // Encontrar números no final
   const mNum = corpo.match(RE_NUMEROS_FIM);
   if (!mNum) return null;
 
   const [, sit, qtdS, valorS, vtS, vaS, totalS] = mNum;
   const resto = corpo.slice(0, mNum.index).trim();
 
-  // Encontrar o motivo
+  // Encontrar motivo
   let motivo = "Não informado";
   let idxMotivo = -1;
   const upper = resto.toUpperCase();
@@ -129,7 +134,7 @@ function tentarParseRegistro(
     }
   }
 
-  // Separar o que vem antes do motivo (local/posto)
+  // Separar antes do motivo
   let antesMotivo = resto;
   if (idxMotivo >= 0) {
     antesMotivo = resto.slice(0, idxMotivo).trim();
@@ -152,7 +157,7 @@ function tentarParseRegistro(
     antesMotivo = "";
   }
 
-  // Encontrar colaborador (substituído)
+  // Encontrar colaborador
   let colaborador = "Não informado";
   let codColab = "";
   const mSubst = antesMotivo.match(/(\d{7})\s*-\s*(.+)$/);
@@ -164,7 +169,6 @@ function tentarParseRegistro(
     colaborador = antesMotivo.replace(/^-\s*/, "").trim() || "Não informado";
   }
 
-  // Limpar local (remover prefixo "- ")
   local = local.replace(/^-\s*/, "").trim() || "Não informado";
 
   return {
@@ -203,7 +207,6 @@ export async function processarPdf(file: File): Promise<ResultadoPdf> {
   let totalGQtd = 0;
   let totalGVal = 0;
   let substitutoAtual = "";
-  let codSubstAtual = "";
   
   const registros: RegistroImportado[] = [];
   let pendente: RegistroParcial | null = null;
@@ -228,13 +231,12 @@ export async function processarPdf(file: File): Promise<ResultadoPdf> {
     // Substituto
     const mS = linha.match(RE_SUBSTITUTO);
     if (mS) {
-      codSubstAtual = mS[1];
       substitutoAtual = mS[2].trim();
       pendente = null;
       continue;
     }
 
-    // Ignorar linhas de cabeçalho/rodapé
+    // Ignorar cabeçalho/rodapé
     if (
       linha.startsWith("MAPA DE COBERTURA") ||
       linha.startsWith("DATA ") ||
@@ -245,7 +247,7 @@ export async function processarPdf(file: File): Promise<ResultadoPdf> {
       continue;
     }
 
-    // Tentar parse de data (início de registro)
+    // Tentar parse de data (aceita QUALQUER data no formato DD/MM/AAAA)
     const mD = linha.match(RE_DATA);
     if (mD) {
       const [, data, classifStr, corpo] = mD;
@@ -261,7 +263,7 @@ export async function processarPdf(file: File): Promise<ResultadoPdf> {
       continue;
     }
 
-    // Se tem registro pendente, tentar completar
+    // Completar registro pendente
     if (pendente) {
       const combinado = pendente.texto + " " + linha;
       const reg = tentarParseRegistro(pendente.data, pendente.classificacao, combinado, substitutoAtual);
@@ -274,11 +276,9 @@ export async function processarPdf(file: File): Promise<ResultadoPdf> {
     }
   }
 
-  // Calcular totais
   const totalCalculadoQtd = registros.reduce((s, r) => s + r.quantidade, 0);
   const totalCalculadoValor = registros.reduce((s, r) => s + r.totalGeral, 0);
 
-  // Verificar se confere (tolerância de 0,01 para quantidade e 0,05 para valor)
   const conferido =
     Math.abs(totalCalculadoQtd - totalGQtd) < 0.01 &&
     Math.abs(totalCalculadoValor - totalGVal) < 0.05;
