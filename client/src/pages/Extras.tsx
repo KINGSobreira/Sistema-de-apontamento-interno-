@@ -1,7 +1,6 @@
 // ============================================
 // Controle de Extras — Todas as Extras
 // ============================================
-
 import { useState, useMemo } from "react";
 import { useData } from "@/contexts/DataContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -57,14 +56,12 @@ import {
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
-
 const STATUS_OPTIONS: { value: StatusPagamento; label: string; icon: React.ElementType; color: string }[] = [
   { value: "pendente", label: "Pendente", icon: Clock, color: "bg-amber-100 text-amber-800 border-amber-200" },
   { value: "conferido", label: "Conferido", icon: CheckCircle2, color: "bg-blue-100 text-blue-800 border-blue-200" },
   { value: "pago", label: "Pago", icon: CheckCircle2, color: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   { value: "divergencia", label: "Divergência", icon: AlertTriangle, color: "bg-red-100 text-red-800 border-red-200" },
 ];
-
 export default function Extras() {
   const { extras, configuracoes, recarregar } = useData();
   const { usuario, registrarAcao } = useAuth();
@@ -150,20 +147,27 @@ export default function Extras() {
     setSelecionados(novo);
   };
 
+  const rotuloStatus = (s: StatusPagamento) =>
+    STATUS_OPTIONS.find((o) => o.value === s)?.label || s;
+
   const handleAplicarStatusEmMassa = async () => {
     if (selecionados.size === 0) return;
     
     setAplicandoStatus(true);
     try {
-      const promises = Array.from(selecionados).map((id) =>
-        atualizarStatusExtra(id, statusEmMassa)
+      const selecionadasExtras = extras.filter((e) => selecionados.has(e.id));
+      const promises = selecionadasExtras.map((extra) =>
+        atualizarStatusExtra(extra.id, statusEmMassa)
       );
       await Promise.all(promises);
       
-      registrarAcao(
-        `Alterou status de ${selecionados.size} extras para ${statusEmMassa}`,
-        "Alteração em massa"
-      );
+      // Registra um log detalhado para cada extra alterada (de → para)
+      for (const extra of selecionadasExtras) {
+        registrarAcao(
+          `Alterou status de "${rotuloStatus(extra.status)}" para "${rotuloStatus(statusEmMassa)}" — ${extra.substituto} (${extra.data}, ${formatarMoeda(extra.totalGeral)})`,
+          "Extras"
+        );
+      }
       
       toast.success(`Status alterado para ${selecionados.size} extras!`);
       setSelecionados(new Set());
@@ -173,6 +177,22 @@ export default function Extras() {
       toast.error("Erro ao alterar status.");
     } finally {
       setAplicandoStatus(false);
+    }
+  };
+
+  const handleMudarStatusIndividual = async (extra: Extra, novoStatus: StatusPagamento) => {
+    if (extra.status === novoStatus) return;
+    try {
+      await atualizarStatusExtra(extra.id, novoStatus);
+      registrarAcao(
+        `Alterou status de "${rotuloStatus(extra.status)}" para "${rotuloStatus(novoStatus)}" — ${extra.substituto} (${extra.data}, ${formatarMoeda(extra.totalGeral)})`,
+        "Extras"
+      );
+      toast.success(`Status de ${extra.substituto} alterado para ${rotuloStatus(novoStatus)}.`);
+      await recarregar();
+    } catch (error) {
+      console.error("Erro ao alterar status:", error);
+      toast.error("Erro ao alterar status.");
     }
   };
 
@@ -367,6 +387,25 @@ export default function Extras() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" title="Alterar status">
+                            <ChevronDown className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {STATUS_OPTIONS.map((s) => (
+                            <DropdownMenuItem
+                              key={s.value}
+                              disabled={s.value === extra.status}
+                              onClick={() => handleMudarStatusIndividual(extra, s.value)}
+                            >
+                              <s.icon className="h-4 w-4 mr-2" />
+                              Marcar como {s.label}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -407,10 +446,6 @@ export default function Extras() {
             <AlertDialogDescription>
               Tem certeza que deseja excluir a extra de <strong>{extraParaExcluir?.substituto}</strong> no dia{" "}
               <strong>{extraParaExcluir?.data}</strong>?
-                
-
-                
-
               Esta ação não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
