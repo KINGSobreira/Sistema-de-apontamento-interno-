@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/Layout";
 import { BarraFiltros, aplicarFiltros } from "@/components/FiltrosGlobais";
 import type { FiltrosGlobais } from "@/lib/types";
 import { formatarMoeda } from "@/lib/utils";
-import { Wallet, Hourglass, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Wallet, Hourglass, AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -28,11 +28,14 @@ export default function Pagamentos() {
   const totais = useMemo(() => {
     const soma = (status: string) =>
       filtrados.filter((e) => e.status === status).reduce((s, e) => s + e.totalGeral, 0);
+    const pago = soma("pago");
+    const conferido = soma("conferido");
     return {
-      pago: soma("pago"),
+      pago,
       pendente: soma("pendente"),
-      conferido: soma("conferido"),
+      conferido,
       divergencia: soma("divergencia"),
+      jaConferido: pago + conferido, // tudo que já passou pela conferência (aguardando pagamento ou já pago)
       geral: filtrados.reduce((s, e) => s + e.totalGeral, 0),
     };
   }, [filtrados]);
@@ -77,13 +80,22 @@ export default function Pagamentos() {
     { titulo: "Em divergência", valor: totais.divergencia, icone: AlertTriangle, cor: "text-red-700", bg: "bg-red-100 text-red-700" },
   ];
 
+  const cardAcumulado = {
+    titulo: "Já passou por conferência",
+    valor: totais.jaConferido,
+    icone: ShieldCheck,
+    cor: "text-teal-700",
+    bg: "bg-teal-100 text-teal-700",
+    sub: "Conferido + Pago (acumulado)",
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader titulo="Pagamentos" descricao="Acompanhamento dos valores pagos, pendentes e em divergência." />
 
       <BarraFiltros filtros={filtros} onChange={setFiltros} compacto />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         {cards.map((c) => (
           <div key={c.titulo} className="rounded-xl border bg-card p-5 shadow-sm">
             <div className="flex items-center justify-between">
@@ -97,6 +109,19 @@ export default function Pagamentos() {
             </div>
           </div>
         ))}
+        {/* Card acumulado: nunca zera quando o status muda para Pago */}
+        <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-teal-800">{cardAcumulado.titulo}</p>
+              <p className={`num font-display mt-1.5 text-2xl font-bold ${cardAcumulado.cor}`}>{formatarMoeda(cardAcumulado.valor)}</p>
+              <p className="mt-1 text-[11px] text-teal-700/80">{cardAcumulado.sub}</p>
+            </div>
+            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${cardAcumulado.bg}`}>
+              <cardAcumulado.icone className="h-5 w-5" />
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
