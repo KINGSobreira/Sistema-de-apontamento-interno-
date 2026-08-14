@@ -28,10 +28,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
 } from "recharts";
 
 // Mapeamento de classificações para nomes descritivos
@@ -52,6 +48,8 @@ const NOMES_CLASSIFICACOES: Record<number, string> = {
   11: "Porteiro Diurno SDF 8h",
   14: "Facilities Diurno",
   16: "Porteiro Diurno Comercial",
+  17: "Porteiro Diurno 8h",
+  18: "Porteiro Diurno 6h",
   20: "Porteiro Diurno 4h",
   21: "Porteiro Diurno 6h",
   22: "Porteiro Diurno 6h",
@@ -198,7 +196,7 @@ export default function Dashboard() {
       mapa.set(e.classificacao, (mapa.get(e.classificacao) || 0) + e.totalGeral);
     }
     return Array.from(mapa.entries())
-      .sort((a, b) => a[0] - b[0])
+      .sort((a, b) => b[1] - a[1]) // Ordena por valor (maior primeiro)
       .map(([c, valor]) => ({ nome: getNomeClassificacao(c), valor: Math.round(valor * 100) / 100 }));
   }, [filtrados]);
 
@@ -298,19 +296,18 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Gráfico de classificação - BARRAS HORIZONTAIS */}
         <div className="rounded-xl border bg-card p-5 shadow-sm">
           <h3 className="font-display text-[15px] font-bold mb-4">Por classificação</h3>
           {porClassificacao.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie data={porClassificacao} dataKey="valor" nameKey="nome" cx="50%" cy="45%" outerRadius={85} innerRadius={45} paddingAngle={3}>
-                  {porClassificacao.map((_, i) => (
-                    <Cell key={i} fill={CORES_GRAFICO[i % CORES_GRAFICO.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => formatarMoeda(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13 }} />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
+            <ResponsiveContainer width="100%" height={Math.max(300, porClassificacao.length * 40)}>
+              <BarChart data={porClassificacao} layout="vertical" margin={{ top: 5, right: 30, left: 110, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$ ${(v / 1000).toFixed(1)}k`} />
+                <YAxis type="category" dataKey="nome" width={105} tick={{ fontSize: 11, fill: "#334155" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v: number) => [formatarMoeda(v), "Valor"]} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13 }} />
+                <Bar dataKey="valor" fill="#008163" radius={[0, 6, 6, 0]} maxBarSize={24} />
+              </BarChart>
             </ResponsiveContainer>
           ) : (
             <p className="py-16 text-center text-sm text-muted-foreground">Sem dados.</p>
