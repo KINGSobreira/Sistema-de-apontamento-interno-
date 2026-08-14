@@ -34,6 +34,41 @@ import {
   Legend,
 } from "recharts";
 
+// Mapeamento de classificações para nomes descritivos
+const NOMES_CLASSIFICACOES: Record<number, string> = {
+  // Vigilância (Segurança, Verde, RN, SP)
+  1: "Capital Diurno",
+  2: "Capital Noturno",
+  3: "Interior Diurno",
+  4: "Interior Noturno",
+  5: "Hora Extra ADM",
+  
+  // Facilities
+  6: "Porteiro Noturno Comercial",
+  7: "Porteiro Noturno SDF",
+  8: "Porteiro Diurno Comercial",
+  9: "Porteiro Diurno SDF",
+  10: "Porteiro Diurno 8h",
+  11: "Porteiro Diurno SDF 8h",
+  14: "Facilities Diurno",
+  16: "Porteiro Diurno Comercial",
+  20: "Porteiro Diurno 4h",
+  21: "Porteiro Diurno 6h",
+  22: "Porteiro Diurno 6h",
+  
+  // Terceirização
+  30: "ASG Diurno 8h",
+  31: "ASG Diurno 4h",
+  32: "ASG Diurno 6h",
+  33: "Porteiro Diurno 8h",
+  34: "Porteiro Diurno 6h",
+};
+
+// Função para obter nome da classificação
+function getNomeClassificacao(codigo: number): string {
+  return NOMES_CLASSIFICACOES[codigo] || `Classif. ${codigo}`;
+}
+
 const CORES_GRAFICO = ["#008163", "#005A39", "#16a34a", "#65a30d", "#0d9488", "#059669", "#4d7c0f", "#15803d"];
 
 function KpiCard({
@@ -164,7 +199,7 @@ export default function Dashboard() {
     }
     return Array.from(mapa.entries())
       .sort((a, b) => a[0] - b[0])
-      .map(([c, valor]) => ({ nome: `Classif. ${c}`, valor: Math.round(valor * 100) / 100 }));
+      .map(([c, valor]) => ({ nome: getNomeClassificacao(c), valor: Math.round(valor * 100) / 100 }));
   }, [filtrados]);
 
   const porMotivo = useMemo(() => {
