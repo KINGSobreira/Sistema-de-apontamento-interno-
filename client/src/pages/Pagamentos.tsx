@@ -98,12 +98,12 @@ export default function Pagamentos() {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         {cards.map((c) => (
           <div key={c.titulo} className="rounded-xl border bg-card p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{c.titulo}</p>
-                <p className={`num font-display mt-1.5 text-2xl font-bold ${c.cor}`}>{formatarMoeda(c.valor)}</p>
+                <p className={`num font-display mt-1.5 text-xl xl:text-[22px] leading-tight font-bold break-words ${c.cor}`}>{formatarMoeda(c.valor)}</p>
               </div>
-              <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${c.bg}`}>
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${c.bg}`}>
                 <c.icone className="h-5 w-5" />
               </div>
             </div>
@@ -111,13 +111,13 @@ export default function Pagamentos() {
         ))}
         {/* Card acumulado: nunca zera quando o status muda para Pago */}
         <div className="rounded-xl border border-teal-200 bg-teal-50/50 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-teal-800">{cardAcumulado.titulo}</p>
-              <p className={`num font-display mt-1.5 text-2xl font-bold ${cardAcumulado.cor}`}>{formatarMoeda(cardAcumulado.valor)}</p>
+              <p className={`num font-display mt-1.5 text-xl xl:text-[22px] leading-tight font-bold break-words ${cardAcumulado.cor}`}>{formatarMoeda(cardAcumulado.valor)}</p>
               <p className="mt-1 text-[11px] text-teal-700/80">{cardAcumulado.sub}</p>
             </div>
-            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${cardAcumulado.bg}`}>
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${cardAcumulado.bg}`}>
               <cardAcumulado.icone className="h-5 w-5" />
             </div>
           </div>
