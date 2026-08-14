@@ -28,10 +28,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
 } from "recharts";
 
 // Mapeamento de classificações para nomes descritivos
@@ -68,8 +64,6 @@ const NOMES_CLASSIFICACOES: Record<number, string> = {
 function getNomeClassificacao(codigo: number): string {
   return NOMES_CLASSIFICACOES[codigo] || `Classif. ${codigo}`;
 }
-
-const CORES_GRAFICO = ["#008163", "#005A39", "#16a34a", "#65a30d", "#0d9488", "#059669", "#4d7c0f", "#15803d"];
 
 function KpiCard({
   titulo,
@@ -302,15 +296,25 @@ export default function Dashboard() {
           <h3 className="font-display text-[15px] font-bold mb-4">Por classificação</h3>
           {porClassificacao.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie data={porClassificacao} dataKey="valor" nameKey="nome" cx="50%" cy="45%" outerRadius={85} innerRadius={45} paddingAngle={3}>
-                  {porClassificacao.map((_, i) => (
-                    <Cell key={i} fill={CORES_GRAFICO[i % CORES_GRAFICO.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => formatarMoeda(v)} contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13 }} />
-                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
+              <BarChart data={porClassificacao} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis
+                  dataKey="nome"
+                  interval={0}
+                  angle={-45}
+                  textAnchor="end"
+                  height={90}
+                  tick={{ fontSize: 10, fill: "#64748b" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$ ${(v / 1000).toFixed(1)}k`} />
+                <Tooltip
+                  formatter={(v: number) => [formatarMoeda(v), "Valor"]}
+                  contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13 }}
+                />
+                <Bar dataKey="valor" fill="#008163" radius={[6, 6, 0, 0]} maxBarSize={32} />
+              </BarChart>
             </ResponsiveContainer>
           ) : (
             <p className="py-16 text-center text-sm text-muted-foreground">Sem dados.</p>
