@@ -1,17 +1,19 @@
 // ============================================
-// Controle de Extras — Todas as Extras (tabela completa)
+// Controle de Extras — Todas as Extras
 // ============================================
 
-import { useMemo, useState } from "react";
+import { useState, useMemo } from "react";
 import { useData } from "@/contexts/DataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { PageHeader, BadgeStatus, BadgeOrigem } from "@/components/Layout";
+import { PageHeader } from "@/components/Layout";
 import { BarraFiltros, aplicarFiltros } from "@/components/FiltrosGlobais";
-import type { FiltrosGlobais, Extra, StatusPagamento } from "@/lib/types";
-import { formatarMoeda, formatarNumero } from "@/lib/utils";
+import type { Extra, StatusPagamento, FiltrosGlobais } from "@/lib/types";
+import { formatarMoeda, formatarNumero, formatarData } from "@/lib/utils";
 import { atualizarStatusExtra, excluirExtra } from "@/lib/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -20,287 +22,468 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { ChevronLeft, ChevronRight, Eye, Trash2, ArrowUpDown, Download } from "lucide-react";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Search,
+  ChevronDown,
+  Eye,
+  Trash2,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  XCircle,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 
-const POR_PAGINA = 25;
+const STATUS_OPTIONS: { value: StatusPagamento; label: string; icon: React.ElementType; color: string }[] = [
+  { value: "pendente", label: "Pendente", icon: Clock, color: "bg-amber-100 text-amber-800 border-amber-200" },
+  { value: "conferido", label: "Conferido", icon: CheckCircle2, color: "bg-blue-100 text-blue-800 border-blue-200" },
+  { value: "pago", label: "Pago", icon: CheckCircle2, color: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  { value: "divergencia", label: "Divergência", icon: AlertTriangle, color: "bg-red-100 text-red-800 border-red-200" },
+];
 
 export default function Extras() {
-  const { extras, recarregar } = useData();
-  const { isAdmin, registrarAcao } = useAuth();
+  const { extras, configuracoes, recarregar } = useData();
+  const { usuario, registrarAcao } = useAuth();
   const [filtros, setFiltros] = useState<FiltrosGlobais>({});
   const [busca, setBusca] = useState("");
-  const [pagina, setPagina] = useState(1);
-  const [ordenacao, setOrdenacao] = useState<{ campo: keyof Extra; dir: "asc" | "desc" }>({ campo: "dataISO", dir: "desc" });
-  const [detalhe, setDetalhe] = useState<Extra | null>(null);
+  const [ordenacao, setOrdenacao] = useState<{ campo: keyof Extra; direcao: "asc" | "desc" }>({
+    campo: "dataISO",
+    direcao: "desc",
+  });
+  
+  // Seleção múltipla
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [statusEmMassa, setStatusEmMassa] = useState<StatusPagamento>("pendente");
+  const [aplicandoStatus, setAplicandoStatus] = useState(false);
+  
+  // Modais
+  const [extraParaExcluir, setExtraParaExcluir] = useState<Extra | null>(null);
+  const [extraParaVer, setExtraParaVer] = useState<Extra | null>(null);
 
-  const filtrados = useMemo(() => {
-    let lista = aplicarFiltros(extras, filtros);
-    if (busca.trim()) {
-      const b = busca.toUpperCase();
-      lista = lista.filter((e) =>
-        `${e.substituto} ${e.colaborador} ${e.posto} ${e.motivo} ${e.filial}`.toUpperCase().includes(b)
+  // Filtrar e ordenar
+  const extrasFiltrados = useMemo(() => {
+    let resultado = aplicarFiltros(extras, filtros);
+    
+    // Busca
+    if (busca) {
+      const termo = busca.toLowerCase();
+      resultado = resultado.filter(
+        (e) =>
+          e.substituto.toLowerCase().includes(termo) ||
+          e.colaborador.toLowerCase().includes(termo) ||
+          e.posto.toLowerCase().includes(termo) ||
+          e.motivo.toLowerCase().includes(termo) ||
+          e.filial.toLowerCase().includes(termo)
       );
     }
-    const dir = ordenacao.dir === "asc" ? 1 : -1;
-    return [...lista].sort((a, b) => {
-      const va = a[ordenacao.campo];
-      const vb = b[ordenacao.campo];
-      if (va === undefined || vb === undefined) return 0;
-      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
-      return String(va).localeCompare(String(vb)) * dir;
+    
+    // Ordenação
+    resultado.sort((a, b) => {
+      const aVal = a[ordenacao.campo];
+      const bVal = b[ordenacao.campo];
+      
+      if (aVal === undefined || bVal === undefined) return 0;
+      if (aVal === null || bVal === null) return 0;
+      
+      let comparacao = 0;
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        comparacao = aVal.localeCompare(bVal);
+      } else if (typeof aVal === "number" && typeof bVal === "number") {
+        comparacao = aVal - bVal;
+      }
+      
+      return ordenacao.direcao === "asc" ? comparacao : -comparacao;
     });
+    
+    return resultado;
   }, [extras, filtros, busca, ordenacao]);
 
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
-  const paginaAtual = Math.min(pagina, totalPaginas);
-  const paginados = filtrados.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
+  // Totais
+  const totais = useMemo(() => {
+    return {
+      quantidade: extrasFiltrados.reduce((s, e) => s + e.quantidade, 0),
+      valor: extrasFiltrados.reduce((s, e) => s + e.totalGeral, 0),
+    };
+  }, [extrasFiltrados]);
 
-  const totais = useMemo(() => ({
-    qtd: filtrados.reduce((s, e) => s + e.quantidade, 0),
-    valor: filtrados.reduce((s, e) => s + e.totalGeral, 0),
-  }), [filtrados]);
+  // ---- Handlers de seleção ----
 
-  const alternarOrdenacao = (campo: keyof Extra) => {
-    setOrdenacao((o) => ({ campo, dir: o.campo === campo && o.dir === "desc" ? "asc" : "desc" }));
-  };
-
-  const mudarStatus = async (extra: Extra, status: StatusPagamento) => {
-    try {
-      await atualizarStatusExtra(extra.id, status);
-      registrarAcao(`Alterou status de "${extra.substituto}" (${extra.data}) para ${status}`, "Extras");
-      await recarregar();
-      toast.success("Status atualizado.");
-    } catch {
-      toast.error("Erro ao atualizar status.");
+  const toggleSelecionarTodos = () => {
+    if (selecionados.size === extrasFiltrados.length) {
+      setSelecionados(new Set());
+    } else {
+      setSelecionados(new Set(extrasFiltrados.map((e) => e.id)));
     }
   };
 
-  const excluir = async (extra: Extra) => {
-    if (!confirm(`Excluir o registro de ${extra.substituto} em ${extra.data}?`)) return;
+  const toggleSelecionar = (id: string) => {
+    const novo = new Set(selecionados);
+    if (novo.has(id)) {
+      novo.delete(id);
+    } else {
+      novo.add(id);
+    }
+    setSelecionados(novo);
+  };
+
+  const handleAplicarStatusEmMassa = async () => {
+    if (selecionados.size === 0) return;
+    
+    setAplicandoStatus(true);
     try {
-      await excluirExtra(extra.id);
-      registrarAcao(`Excluiu registro de "${extra.substituto}" (${extra.data})`, "Extras");
+      const promises = Array.from(selecionados).map((id) =>
+        atualizarStatusExtra(id, statusEmMassa)
+      );
+      await Promise.all(promises);
+      
+      registrarAcao(
+        `Alterou status de ${selecionados.size} extras para ${statusEmMassa}`,
+        "Alteração em massa"
+      );
+      
+      toast.success(`Status alterado para ${selecionados.size} extras!`);
+      setSelecionados(new Set());
       await recarregar();
-      toast.success("Registro excluído.");
-    } catch {
-      toast.error("Erro ao excluir registro.");
+    } catch (error) {
+      console.error("Erro ao alterar status:", error);
+      toast.error("Erro ao alterar status.");
+    } finally {
+      setAplicandoStatus(false);
     }
   };
 
-  const exportarExcel = () => {
-    const dados = filtrados.map((e) => ({
-      Data: e.data,
-      Filial: e.filial,
-      Posto: e.posto,
-      Substituto: e.substituto,
-      Substituído: e.colaborador,
-      Motivo: e.motivo,
-      Classificação: e.classificacao,
-      Quantidade: e.quantidade,
-      "Valor Unitário": e.valorUnitario,
-      Total: e.totalGeral,
-      DataInput: e.dataInput || "",
-      Usuário: e.usuario || "",
-      Status: e.status,
-      Origem: e.origem,
+  const handleExcluir = async () => {
+    if (!extraParaExcluir) return;
+    
+    try {
+      await excluirExtra(extraParaExcluir.id);
+      registrarAcao(`Excluiu extra de ${extraParaExcluir.substituto}`, "Exclusão");
+      toast.success("Extra excluída com sucesso!");
+      setExtraParaExcluir(null);
+      await recarregar();
+    } catch (error) {
+      console.error("Erro ao excluir:", error);
+      toast.error("Erro ao excluir extra.");
+    }
+  };
+
+  const handleOrdenar = (campo: keyof Extra) => {
+    setOrdenacao((atual) => ({
+      campo,
+      direcao: atual.campo === campo && atual.direcao === "asc" ? "desc" : "asc",
     }));
-    const ws = XLSX.utils.json_to_sheet(dados);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Extras");
-    XLSX.writeFile(wb, `extras_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    registrarAcao("Exportou tabela de extras em Excel", "Extras");
   };
 
-  const Th = ({ campo, children, className = "" }: { campo?: keyof Extra; children: React.ReactNode; className?: string }) => (
-    <th
-      className={`px-3 py-2.5 font-semibold text-left text-[11px] uppercase tracking-wide text-muted-foreground ${campo ? "cursor-pointer select-none hover:text-foreground" : ""} ${className}`}
-      onClick={campo ? () => alternarOrdenacao(campo) : undefined}
-    >
-      <span className="inline-flex items-center gap-1">
-        {children}
-        {campo && <ArrowUpDown className="h-3 w-3 opacity-50" />}
-      </span>
-    </th>
-  );
+  const getStatusBadge = (status: StatusPagamento) => {
+    const config = STATUS_OPTIONS.find((s) => s.value === status) || STATUS_OPTIONS[0];
+    const Icone = config.icon;
+    return (
+      <Badge variant="outline" className={`${config.color} gap-1`}>
+        <Icone className="h-3 w-3" />
+        {config.label}
+      </Badge>
+    );
+  };
+
+  const todosSelecionados = extrasFiltrados.length > 0 && selecionados.size === extrasFiltrados.length;
+  const algunsSelecionados = selecionados.size > 0 && selecionados.size < extrasFiltrados.length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <PageHeader
         titulo="Todas as Extras"
-        descricao={`${filtrados.length} registros • ${formatarNumero(totais.qtd)} unidades • ${formatarMoeda(totais.valor)}`}
-        acoes={
-          <Button variant="outline" size="sm" onClick={exportarExcel} className="gap-1.5">
-            <Download className="h-4 w-4" /> Exportar Excel
-          </Button>
-        }
+        descricao="Gerencie todas as horas extras registradas no sistema."
       />
 
-      <BarraFiltros filtros={filtros} onChange={(f) => { setFiltros(f); setPagina(1); }} compacto />
+      <BarraFiltros filtros={filtros} onChange={setFiltros} />
 
-      <div className="relative">
-        <Input
-          placeholder="Pesquisar por nome, posto, motivo, filial..."
-          value={busca}
-          onChange={(e) => { setBusca(e.target.value); setPagina(1); }}
-          className="h-10"
-        />
-      </div>
-
-      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-[12.5px]">
-            <thead className="bg-slate-50 border-b">
-              <tr>
-                <Th campo="dataISO">Data</Th>
-                <Th campo="posto">Posto</Th>
-                <Th campo="substituto">Substituto</Th>
-                <Th campo="colaborador">Substituído</Th>
-                <Th campo="motivo">Motivo</Th>
-                <Th campo="classificacao" className="text-center">Cl.</Th>
-                <Th campo="quantidade" className="text-right">Qtd</Th>
-                <Th campo="totalGeral" className="text-right">Total</Th>
-                <Th campo="dataInput">DataInput</Th>
-                <Th campo="usuario">Usuário</Th>
-                <Th>Status</Th>
-                <Th>Origem</Th>
-                <Th className="text-center">Ações</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginados.map((e) => (
-                <tr key={e.id} className={`border-b last:border-0 hover:bg-slate-50/70 ${e.status === "divergencia" ? "bg-red-50/40" : ""}`}>
-                  <td className="px-3 py-2.5 num whitespace-nowrap">{e.data}</td>
-                  <td className="px-3 py-2.5 max-w-[180px] truncate">{e.posto}</td>
-                  <td className="px-3 py-2.5 max-w-[170px] truncate font-medium">{e.substituto}</td>
-                  <td className="px-3 py-2.5 max-w-[150px] truncate text-muted-foreground">{e.colaborador}</td>
-                  <td className="px-3 py-2.5 max-w-[140px] truncate">{e.motivo}</td>
-                  <td className="px-3 py-2.5 text-center num">{e.classificacao || "—"}</td>
-                  <td className="px-3 py-2.5 text-right num">{formatarNumero(e.quantidade)}</td>
-                  <td className="px-3 py-2.5 text-right num font-semibold">{formatarMoeda(e.totalGeral)}</td>
-                  <td className="px-3 py-2.5 num whitespace-nowrap text-muted-foreground">{e.dataInput || "—"}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground max-w-[100px] truncate">{e.usuario || "—"}</td>
-                  <td className="px-3 py-2.5">
-                    {isAdmin ? (
-                      <Select value={e.status} onValueChange={(v) => mudarStatus(e, v as StatusPagamento)}>
-                        <SelectTrigger className="h-7 w-[120px] text-[11px] border-0 bg-transparent p-0 shadow-none focus:ring-0">
-                          <SelectValue><BadgeStatus status={e.status} /></SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pendente">Pendente</SelectItem>
-                          <SelectItem value="conferido">Conferido</SelectItem>
-                          <SelectItem value="pago">Pago</SelectItem>
-                          <SelectItem value="divergencia">Divergência</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <BadgeStatus status={e.status} />
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5"><BadgeOrigem origem={e.origem} /></td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => setDetalhe(e)} className="p-1.5 rounded-md hover:bg-slate-100 text-muted-foreground hover:text-foreground" title="Detalhes">
-                        <Eye className="h-4 w-4" />
-                      </button>
-                      {isAdmin && (
-                        <button onClick={() => excluir(e)} className="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600" title="Excluir">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
+      {/* Barra de ações em massa */}
+      {selecionados.size > 0 && (
+        <div className="flex items-center gap-4 p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+          <span className="text-sm font-medium text-emerald-800">
+            {selecionados.size} {selecionados.size === 1 ? "item selecionado" : "itens selecionados"}
+          </span>
+          
+          <div className="flex items-center gap-2">
+            <Select value={statusEmMassa} onValueChange={(v) => setStatusEmMassa(v as StatusPagamento)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Selecione o status" />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_OPTIONS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    <div className="flex items-center gap-2">
+                      <s.icon className="h-4 w-4" />
+                      {s.label}
                     </div>
-                  </td>
-                </tr>
-              ))}
-              {paginados.length === 0 && (
-                <tr>
-                  <td colSpan={13} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                    Nenhum registro encontrado. {extras.length === 0 && "Importe um relatório para começar."}
-                  </td>
-                </tr>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            <Button
+              onClick={handleAplicarStatusEmMassa}
+              disabled={aplicandoStatus}
+              className="bg-emerald-600 hover:bg-emerald-700"
+            >
+              {aplicandoStatus ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Aplicando...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Aplicar a todos
+                </>
               )}
-            </tbody>
-          </table>
+            </Button>
+          </div>
+          
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelecionados(new Set())}
+            className="text-emerald-700"
+          >
+            Limpar seleção
+          </Button>
         </div>
+      )}
 
-        {/* Paginação */}
-        <div className="flex items-center justify-between border-t px-4 py-3 bg-slate-50/60">
-          <p className="text-[12px] text-muted-foreground">
-            Página {paginaAtual} de {totalPaginas} • {filtrados.length} registros
-          </p>
-          <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="icon" className="h-8 w-8" disabled={paginaAtual <= 1} onClick={() => setPagina(paginaAtual - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-8 w-8" disabled={paginaAtual >= totalPaginas} onClick={() => setPagina(paginaAtual + 1)}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+      {/* Busca e totais */}
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Pesquisar por nome, posto, motivo, filial..."
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        
+        <div className="flex gap-4 text-sm">
+          <div className="text-muted-foreground">
+            <span className="font-medium text-foreground">{extrasFiltrados.length}</span> registros
+          </div>
+          <div className="text-muted-foreground">
+            <span className="font-medium text-foreground">{formatarNumero(totais.quantidade)}</span> unidades
+          </div>
+          <div className="text-muted-foreground">
+            <span className="font-medium text-emerald-700">{formatarMoeda(totais.valor)}</span> total
           </div>
         </div>
       </div>
 
-      {/* Modal de detalhes */}
-      <Dialog open={!!detalhe} onOpenChange={() => setDetalhe(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-display">Detalhes do registro</DialogTitle>
-            <DialogDescription>Informações completas da hora extra.</DialogDescription>
-          </DialogHeader>
-          {detalhe && (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-[13px]">
-              {[
-                ["Data", detalhe.data],
-                ["Data de lançamento", detalhe.dataInput || "Não informado"],
-                ["Filial", detalhe.filial],
-                ["Substituto", detalhe.substituto],
-                ["Mat. substituto", detalhe.codigoSubstituto || "—"],
-                ["Substituído", detalhe.colaborador],
-                ["Mat. substituído", detalhe.codigoColaborador || "—"],
-                ["Posto", detalhe.posto],
-                ["Cód. posto", detalhe.codigoPosto || "—"],
-                ["Motivo", detalhe.motivo],
-                ["Classificação", detalhe.classificacao ? `Classif. ${detalhe.classificacao}` : "Não identificada"],
-                ["Quantidade", formatarNumero(detalhe.quantidade)],
-                ["Valor unitário", formatarMoeda(detalhe.valorUnitario)],
-                ["Subtotal", formatarMoeda(detalhe.valorTotal)],
-                ["VT", formatarMoeda(detalhe.vt)],
-                ["VA", formatarMoeda(detalhe.va)],
-                ["Total geral", formatarMoeda(detalhe.totalGeral)],
-                ["Usuário (lançamento)", detalhe.usuario || "Não informado"],
-                ["Arquivo de origem", detalhe.arquivoOrigem],
-                ["Dias p/ lançamento", detalhe.diasParaLancamento !== undefined ? `${detalhe.diasParaLancamento} dia(s)` : "—"],
-              ].map(([rotulo, valor]) => (
-                <div key={rotulo as string}>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{rotulo}</p>
-                  <p className="mt-0.5 font-medium break-words">{valor}</p>
-                </div>
+      {/* Tabela */}
+      <div className="border rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="w-[40px]">
+                  <Checkbox
+                    checked={todosSelecionados}
+                    onCheckedChange={toggleSelecionarTodos}
+                    ref={(ref) => {
+                      if (ref) {
+                        (ref as HTMLButtonElement).indeterminate = algunsSelecionados;
+                      }
+                    }}
+                  />
+                </TableHead>
+                <TableHead className="cursor-pointer" onClick={() => handleOrdenar("data")}>
+                  Data {ordenacao.campo === "data" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead className="cursor-pointer" onClick={() => handleOrdenar("substituto")}>
+                  Substituído {ordenacao.campo === "substituto" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead className="cursor-pointer" onClick={() => handleOrdenar("motivo")}>
+                  Motivo {ordenacao.campo === "motivo" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead className="cursor-pointer text-center" onClick={() => handleOrdenar("classificacao")}>
+                  Cl. {ordenacao.campo === "classificacao" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead className="cursor-pointer text-right" onClick={() => handleOrdenar("quantidade")}>
+                  Qtd {ordenacao.campo === "quantidade" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead className="cursor-pointer text-right" onClick={() => handleOrdenar("totalGeral")}>
+                  Total {ordenacao.campo === "totalGeral" && (ordenacao.direcao === "asc" ? "↑" : "↓")}
+                </TableHead>
+                <TableHead>DataInput</TableHead>
+                <TableHead>Usuário</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Origem</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {extrasFiltrados.map((extra) => (
+                <TableRow key={extra.id} className="hover:bg-slate-50">
+                  <TableCell>
+                    <Checkbox
+                      checked={selecionados.has(extra.id)}
+                      onCheckedChange={() => toggleSelecionar(extra.id)}
+                    />
+                  </TableCell>
+                  <TableCell>{formatarData(extra.data)}</TableCell>
+                  <TableCell className="max-w-[150px] truncate">{extra.substituto}</TableCell>
+                  <TableCell className="max-w-[120px] truncate">{extra.motivo}</TableCell>
+                  <TableCell className="text-center">{extra.classificacao}</TableCell>
+                  <TableCell className="text-right">{formatarNumero(extra.quantidade)}</TableCell>
+                  <TableCell className="text-right font-medium">{formatarMoeda(extra.totalGeral)}</TableCell>
+                  <TableCell>{extra.dataInput ? formatarData(extra.dataInput) : "—"}</TableCell>
+                  <TableCell>{extra.usuarioLancamento || "—"}</TableCell>
+                  <TableCell>{getStatusBadge(extra.status)}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className="text-xs">
+                      {extra.origem === "pdf" ? "PDF" : extra.origem === "excel" ? "Excel" : "PDF+Excel"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setExtraParaVer(extra)}
+                        title="Ver detalhes"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setExtraParaExcluir(extra)}
+                        title="Excluir"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
               ))}
-              {detalhe.observacao && (
-                <div className="col-span-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Observação</p>
-                  <p className="mt-0.5 text-[12.5px] leading-relaxed">{detalhe.observacao}</p>
-                </div>
-              )}
-              <div className="col-span-2 flex items-center gap-2 pt-1">
-                <BadgeStatus status={detalhe.status} />
-                <BadgeOrigem origem={detalhe.origem} />
-                {detalhe.revisaoNecessaria && (
-                  <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
-                    Revisão necessária
-                  </span>
-                )}
-              </div>
+            </TableBody>
+          </Table>
+        </div>
+        
+        {extrasFiltrados.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            Nenhuma extra encontrada.
+          </div>
+        )}
+      </div>
+
+      {/* Modal de confirmação de exclusão */}
+      <AlertDialog open={!!extraParaExcluir} onOpenChange={() => setExtraParaExcluir(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir a extra de <strong>{extraParaExcluir?.substituto}</strong> no dia{" "}
+              <strong>{extraParaExcluir?.data}</strong>?
+                
+
+                
+
+              Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleExcluir} className="bg-red-600 hover:bg-red-700">
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal de detalhes */}
+      <AlertDialog open={!!extraParaVer} onOpenChange={() => setExtraParaVer(null)}>
+        <AlertDialogContent className="max-w-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Detalhes da Extra</AlertDialogTitle>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Data</p>
+              <p className="font-medium">{extraParaVer?.data}</p>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            <div>
+              <p className="text-sm text-muted-foreground">Classificação</p>
+              <p className="font-medium">{extraParaVer?.classificacao}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Substituto</p>
+              <p className="font-medium">{extraParaVer?.substituto}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Colaborador</p>
+              <p className="font-medium">{extraParaVer?.colaborador}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Posto</p>
+              <p className="font-medium">{extraParaVer?.posto}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Motivo</p>
+              <p className="font-medium">{extraParaVer?.motivo}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Quantidade</p>
+              <p className="font-medium">{formatarNumero(extraParaVer?.quantidade || 0)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Valor Unitário</p>
+              <p className="font-medium">{formatarMoeda(extraParaVer?.valorUnitario || 0)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Total</p>
+              <p className="font-medium text-emerald-700">{formatarMoeda(extraParaVer?.totalGeral || 0)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Status</p>
+              <p className="font-medium">{extraParaVer?.status}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Filial</p>
+              <p className="font-medium">{extraParaVer?.filial}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Período</p>
+              <p className="font-medium">{extraParaVer?.periodo}</p>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Fechar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
