@@ -1,312 +1,272 @@
 // ============================================
-// Controle de Extras — Importação de PDF e Excel
-// Fluxo: selecionar arquivo -> processar -> prévia ->
-// duplicidade -> (opcional) cruzamento -> confirmar
+// Controle de Extras — Página de Importação
 // ============================================
 
-import { useState, useMemo } from "react";
+import { useState, useRef } from "react";
 import { useData } from "@/contexts/DataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { PageHeader, BadgeOrigem } from "@/components/Layout";
+import { PageHeader } from "@/components/Layout";
 import { processarPdf, type ResultadoPdf } from "@/lib/parserPdf";
 import { processarExcel, type ResultadoExcel } from "@/lib/parserExcel";
 import { cruzarRegistros } from "@/lib/cruzamento";
 import { salvarExtrasEmLote, registrarImportacao } from "@/lib/firestore";
 import type { RegistroImportado, Extra, ResultadoConferencia } from "@/lib/types";
-import {
-  formatarMoeda,
-  formatarNumero,
-  agoraISO,
-  diffDias,
-} from "@/lib/utils";
+import { formatarMoeda, formatarNumero } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  FileUp,
-  FileSpreadsheet,
   FileText,
-  Loader2,
+  FileSpreadsheet,
+  Upload,
   CheckCircle2,
   AlertTriangle,
-  ArrowRight,
-  ArrowLeft,
-  Upload,
+  Loader2,
   GitCompareArrows,
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Etapa = "selecao" | "previa" | "cruzamento" | "concluido";
+type Etapa = "selecionar" | "previa" | "cruzamento" | "confirmar";
 
 export default function Importar() {
   const { extras, configuracoes, recarregar } = useData();
   const { usuario, registrarAcao } = useAuth();
-
-  const [etapa, setEtapa] = useState<Etapa>("selecao");
-  const [processando, setProcessando] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-
-  const [tipoArquivo, setTipoArquivo] = useState<"pdf" | "excel">("pdf");
-  const [nomeArquivo, setNomeArquivo] = useState("");
+  const [etapa, setEtapa] = useState<Etapa>("selecionar");
+  const [carregando, setCarregando] = useState(false);
+  const [progresso, setProgresso] = useState(0);
+  
+  // Dados do PDF
   const [resultadoPdf, setResultadoPdf] = useState<ResultadoPdf | null>(null);
+  const [arquivoPdf, setArquivoPdf] = useState<File | null>(null);
+  
+  // Dados do Excel
   const [resultadoExcel, setResultadoExcel] = useState<ResultadoExcel | null>(null);
-  const [registros, setRegistros] = useState<RegistroImportado[]>([]);
-  const [conferencia, setConferencia] = useState<ResultadoConferencia | null>(null);
-  const [modoCruzamento, setModoCruzamento] = useState(false);
+  const [arquivoExcel, setArquivoExcel] = useState<File | null>(null);
+  
+  // Cruzamento
+  const [resultadoCruzamento, setResultadoCruzamento] = useState<ResultadoConferencia | null>(null);
+  
+  // Refs para inputs de arquivo
+  const inputPdfRef = useRef<HTMLInputElement>(null);
+  const inputExcelRef = useRef<HTMLInputElement>(null);
 
-  // ---------- Seleção e processamento ----------
+  // ---- Handlers ----
 
-  const handleArquivo = async (e: React.ChangeEvent<HTMLInputElement>, tipo: "pdf" | "excel") => {
+  const handleSelecionarPdf = () => {
+    inputPdfRef.current?.click();
+  };
+
+  const handleSelecionarExcel = () => {
+    inputExcelRef.current?.click();
+  };
+
+  const handleArquivoPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setProcessando(true);
-    setNomeArquivo(file.name);
-    setTipoArquivo(tipo);
-    setConferencia(null);
-    setModoCruzamento(false);
-
+    
+    setArquivoPdf(file);
+    setCarregando(true);
+    setProgresso(10);
+    
     try {
-      if (tipo === "pdf") {
-        const res = await processarPdf(file);
-        setResultadoPdf(res);
-        setResultadoExcel(null);
-        setRegistros(res.registros);
-        if (res.registros.length === 0) {
-          toast.error("Nenhum registro encontrado no PDF.", {
-            description: "Verifique se o arquivo é um Mapa de Cobertura válido.",
-          });
-          setProcessando(false);
-          return;
-        }
-        toast.success(`PDF processado: ${res.registros.length} registros encontrados.`);
-      } else {
-        const res = await processarExcel(file, configuracoes.classificacoes);
-        setResultadoExcel(res);
+      const resultado = await processarPdf(file);
+      setProgresso(100);
+      
+      // Verificar se encontrou registros
+      if (!resultado.registros || resultado.registros.length === 0) {
+        toast.error("Nenhum registro encontrado no PDF.", {
+          description: "Verifique se o arquivo é um Mapa de Cobertura válido.",
+        });
         setResultadoPdf(null);
-        setRegistros(res.registros);
-        if (res.registros.length === 0) {
-          toast.error("Nenhum registro encontrado no Excel.");
-          setProcessando(false);
-          return;
-        }
-        toast.success(`Excel processado: ${res.registros.length} registros encontrados.`);
-      }
-      setEtapa("previa");
-    } catch (err) {
-      console.error(err);
-      toast.error("Erro ao processar o arquivo.", {
-        description: "Verifique o formato e tente novamente.",
-      });
-    } finally {
-      setProcessando(false);
-      e.target.value = "";
-    }
-  };
-
-  // ---------- Duplicidade ----------
-
-  const analiseDuplicidade = useMemo(() => {
-    const chavesExistentes = new Set(extras.map((e) => e.chave));
-    const chavesNovas = new Set<string>();
-    let novos = 0;
-    let duplicados = 0;
-    for (const r of registros) {
-      if (chavesExistentes.has(r.chave) || chavesNovas.has(r.chave)) {
-        duplicados++;
-      } else {
-        chavesNovas.add(r.chave);
-        novos++;
-      }
-    }
-    return { novos, duplicados, total: registros.length };
-  }, [registros, extras]);
-
-  // ---------- Cruzamento PDF × Excel ----------
-
-  const iniciarCruzamento = () => {
-    if (!resultadoPdf) {
-      toast.error("Importe primeiro o PDF para cruzar com o Excel.");
-      return;
-    }
-    setProcessando(true);
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".xlsx,.xls";
-    input.onchange = async (ev) => {
-      const file = (ev.target as HTMLInputElement).files?.[0];
-      if (!file) {
-        setProcessando(false);
+        setCarregando(false);
         return;
       }
-      try {
-        const resExcel = await processarExcel(file, configuracoes.classificacoes);
-        const conf = cruzarRegistros(resultadoPdf.registros, resExcel.registros);
-        setResultadoExcel(resExcel);
-        setConferencia(conf);
-        setModoCruzamento(true);
-        setEtapa("cruzamento");
-        toast.success("Conferência cruzada concluída.");
-      } catch (err) {
-        console.error(err);
-        toast.error("Erro ao processar o Excel para cruzamento.");
-      } finally {
-        setProcessando(false);
-      }
-    };
-    input.click();
-    setProcessando(false);
+      
+      setResultadoPdf(resultado);
+      setEtapa("previa");
+      
+      toast.success(`PDF processado: ${resultado.registros.length} registros encontrados.`, {
+        description: resultado.conferido 
+          ? "Totais conferem com o relatório." 
+          : "Atenção: totais calculados diferem do relatório.",
+      });
+    } catch (error) {
+      console.error("Erro ao processar PDF:", error);
+      toast.error("Erro ao processar o PDF.", {
+        description: "Verifique se o arquivo não está corrompido ou protegido.",
+      });
+    } finally {
+      setCarregando(false);
+      setProgresso(0);
+      // Limpar input
+      if (inputPdfRef.current) inputPdfRef.current.value = "";
+    }
   };
 
-  // ---------- Confirmação ----------
-
-  const confirmarImportacao = async (somenteNovos: boolean) => {
-    if (!usuario) return;
-    setSalvando(true);
+  const handleArquivoExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setArquivoExcel(file);
+    setCarregando(true);
+    setProgresso(10);
+    
     try {
-      const chavesExistentes = new Set(extras.map((e) => e.chave));
-      const chavesNovas = new Set<string>();
-
-      let registrosFinais: RegistroImportado[] = [];
-
-      if (modoCruzamento && conferencia && resultadoPdf && resultadoExcel) {
-        // No cruzamento: registros coincidentes viram pdf_excel
-        const chavesSomentePdf = new Set(conferencia.somentePdf.map((r) => r.chave));
-        const chavesSomenteExcel = new Set(conferencia.somenteExcel.map((r) => r.chave));
-        const divergentes = new Set(
-          [...conferencia.divergenciaValor, ...conferencia.divergenciaQuantidade, ...conferencia.divergenciaClassificacao].map(
-            (d) => d.registroPdf.chave
-          )
-        );
-
-        const todosPdf = resultadoPdf.registros.map((r) => ({
-          ...r,
-          _origem: chavesSomentePdf.has(r.chave) ? ("pdf" as const) : ("pdf_excel" as const),
-          _divergente: divergentes.has(r.chave),
-        }));
-        const todosExcel = conferencia.somenteExcel.map((r) => ({
-          ...r,
-          _origem: "excel" as const,
-          _divergente: false,
-        }));
-        registrosFinais = [...todosPdf, ...todosExcel];
-        void chavesSomenteExcel;
-      } else {
-        registrosFinais = registros.map((r) => ({ ...r, _origem: tipoArquivo, _divergente: false }));
-      }
-
-      const paraSalvar: Omit<Extra, "id">[] = [];
-      let novosCount = 0;
-      let duplicadosCount = 0;
-
-      for (const r of registrosFinais) {
-        const reg = r as RegistroImportado & { _origem: Extra["origem"]; _divergente: boolean };
-        if (chavesExistentes.has(reg.chave) || chavesNovas.has(reg.chave)) {
-          duplicadosCount++;
-          if (somenteNovos) continue;
-          // Se não for "somente novos", ainda assim não duplica — apenas ignora
-          continue;
-        }
-        chavesNovas.add(reg.chave);
-        novosCount++;
-
-        const diasParaLancamento =
-          reg.dataInputISO && reg.dataISO ? diffDias(reg.dataISO, reg.dataInputISO) : undefined;
-
-        paraSalvar.push({
-          chave: reg.chave,
-          data: reg.data,
-          dataISO: reg.dataISO,
-          dataInput: reg.dataInput,
-          dataInputISO: reg.dataInputISO,
-          filial: reg.filial,
-          codigoFilial: reg.codigoFilial,
-          substituto: reg.substituto,
-          codigoSubstituto: reg.codigoSubstituto,
-          colaborador: reg.colaborador,
-          codigoColaborador: reg.codigoColaborador,
-          posto: reg.posto,
-          codigoPosto: reg.codigoPosto,
-          motivo: reg.motivo,
-          classificacao: reg.classificacao,
-          quantidade: reg.quantidade,
-          valorUnitario: reg.valorUnitario,
-          valorTotal: reg.valorTotal,
-          vt: reg.vt,
-          va: reg.va,
-          totalGeral: reg.totalGeral,
-          usuario: reg.usuario,
-          origem: reg._origem,
-          arquivoOrigem: nomeArquivo,
-          importacaoId: "",
-          importadoEm: agoraISO(),
-          status: reg._divergente ? "divergencia" : "pendente",
-          observacao: reg.observacao,
-          revisaoNecessaria: reg.revisaoNecessaria,
-          diasParaLancamento,
+      const resultado = await processarExcel(file);
+      setProgresso(100);
+      
+      // Verificar se encontrou registros
+      if (!resultado.registros || resultado.registros.length === 0) {
+        toast.error("Nenhum registro encontrado no Excel.", {
+          description: "Verifique se o arquivo é uma planilha de cobertura válida.",
         });
+        setResultadoExcel(null);
+        setCarregando(false);
+        return;
       }
-
-      const totalQtd = paraSalvar.reduce((s, r) => s + r.quantidade, 0);
-      const totalValor = paraSalvar.reduce((s, r) => s + r.totalGeral, 0);
-      const totalDivergencias = conferencia
-        ? conferencia.divergenciaValor.length +
-          conferencia.divergenciaQuantidade.length +
-          conferencia.divergenciaClassificacao.length +
-          conferencia.somentePdf.length +
-          conferencia.somenteExcel.length
-        : 0;
-
-      const importacaoId = await registrarImportacao({
-        dataImportacao: agoraISO(),
-        arquivo: nomeArquivo,
-        tipo: tipoArquivo,
-        filial: resultadoPdf?.filial || resultadoExcel?.filial || "Não informado",
-        periodo: resultadoPdf?.periodo || "Não informado",
-        quantidadeRegistros: registros.length,
-        quantidadeNovos: novosCount,
-        quantidadeDuplicados: duplicadosCount,
-        quantidadeDivergencias: totalDivergencias,
-        valorTotal: totalValor,
-        quantidadeTotal: totalQtd,
-        usuarioResponsavel: usuario.nome,
+      
+      setResultadoExcel(resultado);
+      
+      // Se já tem PDF, fazer cruzamento
+      if (resultadoPdf) {
+        const cruzamento = cruzarRegistros(
+          resultadoPdf.registros,
+          resultado.registros,
+          extras
+        );
+        setResultadoCruzamento(cruzamento);
+        setEtapa("cruzamento");
+        
+        toast.success(`Cruzamento concluído: ${cruzamento.coincidentes.length} coincidentes.`);
+      } else {
+        // Se não tem PDF, mostrar prévia do Excel
+        setEtapa("previa");
+        toast.success(`Excel processado: ${resultado.registros.length} registros encontrados.`);
+      }
+    } catch (error) {
+      console.error("Erro ao processar Excel:", error);
+      toast.error("Erro ao processar o Excel.", {
+        description: "Verifique se o arquivo não está corrompido.",
       });
+    } finally {
+      setCarregando(false);
+      setProgresso(0);
+      // Limpar input
+      if (inputExcelRef.current) inputExcelRef.current.value = "";
+    }
+  };
 
-      // Atualiza importacaoId nos registros
-      const comImportacao = paraSalvar.map((r) => ({ ...r, importacaoId }));
-      await salvarExtrasEmLote(comImportacao);
+  const handleCruzarComExcel = () => {
+    handleSelecionarExcel();
+  };
 
+  const handleConfirmarImportacao = async () => {
+    if (!resultadoPdf && !resultadoExcel) return;
+    
+    setCarregando(true);
+    
+    try {
+      // Determinar quais registros salvar
+      let registrosParaSalvar: RegistroImportado[] = [];
+      let tipo: "pdf" | "excel" | "cruzado" = "pdf";
+      
+      if (resultadoCruzamento) {
+        // Se fez cruzamento, salvar os coincidentes + somente PDF + somente Excel
+        registrosParaSalvar = [
+          ...resultadoCruzamento.coincidentes,
+          ...resultadoCruzamento.somentePdf,
+          ...resultadoCruzamento.somenteExcel,
+        ];
+        tipo = "cruzado";
+      } else if (resultadoPdf) {
+        registrosParaSalvar = resultadoPdf.registros;
+        tipo = "pdf";
+      } else if (resultadoExcel) {
+        registrosParaSalvar = resultadoExcel.registros;
+        tipo = "excel";
+      }
+      
+      // Converter para formato Extra
+      const novosExtras: Omit<Extra, "id">[] = registrosParaSalvar.map((r) => ({
+        data: r.data,
+        dataISO: r.dataISO,
+        classificacao: r.classificacao,
+        substituto: r.substituto,
+        colaborador: r.colaborador,
+        posto: r.posto,
+        motivo: r.motivo,
+        quantidade: r.quantidade,
+        valorUnitario: r.valorUnitario,
+        totalGeral: r.totalGeral,
+        situacao: r.situacao,
+        status: "pendente" as const,
+        origem: tipo === "cruzado" ? "pdf_excel" as const : tipo,
+        filial: resultadoPdf?.filial || resultadoExcel?.filial || "Não identificada",
+        periodo: resultadoPdf?.periodo || resultadoExcel?.periodo || "",
+        importacaoId: "", // Será preenchido depois
+        criadoEm: new Date().toISOString(),
+        criadoPor: usuario?.email || "sistema",
+      }));
+      
+      // Salvar no Firestore
+      const ids = await salvarExtrasEmLote(novosExtras);
+      
+      // Registrar importação
+      await registrarImportacao({
+        arquivo: arquivoPdf?.name || arquivoExcel?.name || "desconhecido",
+        tipo,
+        filial: resultadoPdf?.filial || resultadoExcel?.filial || "Não identificada",
+        periodo: resultadoPdf?.periodo || resultadoExcel?.periodo || "",
+        quantidadeRegistros: registrosParaSalvar.length,
+        quantidadeNovos: ids.length,
+        quantidadeDuplicados: registrosParaSalvar.length - ids.length,
+        quantidadeDivergencias: resultadoCruzamento?.divergencias.length || 0,
+        valorTotal: registrosParaSalvar.reduce((s, r) => s + r.totalGeral, 0),
+        dataImportacao: new Date().toISOString(),
+        usuarioResponsavel: usuario?.nome || usuario?.email || "sistema",
+      });
+      
+      // Registrar ação
       registrarAcao(
-        `Importou arquivo ${tipoArquivo.toUpperCase()} "${nomeArquivo}" (${novosCount} novos registros)`,
+        `Importou ${ids.length} registros de ${arquivoPdf?.name || arquivoExcel?.name}`,
         "Importação"
       );
-
-      await recarregar();
-      setEtapa("concluido");
-      toast.success("Importação concluída com sucesso!", {
-        description: `${novosCount} registros novos importados.`,
+      
+      toast.success(`Importação concluída: ${ids.length} registros salvos.`, {
+        description: registrosParaSalvar.length - ids.length > 0
+          ? `${registrosParaSalvar.length - ids.length} duplicados ignorados.`
+          : undefined,
       });
-    } catch (err) {
-      console.error(err);
+      
+      // Recarregar dados
+      await recarregar();
+      
+      // Resetar estado
+      handleCancelar();
+      
+    } catch (error) {
+      console.error("Erro ao salvar:", error);
       toast.error("Erro ao salvar os dados.", {
         description: "Verifique sua conexão e as regras do Firestore.",
       });
     } finally {
-      setSalvando(false);
+      setCarregando(false);
     }
   };
 
-  const reiniciar = () => {
-    setEtapa("selecao");
+  const handleCancelar = () => {
+    setEtapa("selecionar");
     setResultadoPdf(null);
     setResultadoExcel(null);
-    setRegistros([]);
-    setConferencia(null);
-    setModoCruzamento(false);
-    setNomeArquivo("");
+    setResultadoCruzamento(null);
+    setArquivoPdf(null);
+    setArquivoExcel(null);
   };
 
-  // ---------- Render ----------
-
-  const totalQtd = registros.reduce((s, r) => s + r.quantidade, 0);
-  const totalValor = registros.reduce((s, r) => s + r.totalGeral, 0);
+  // ---- Renderização ----
 
   return (
     <div className="space-y-6">
@@ -315,348 +275,384 @@ export default function Importar() {
         descricao="Importe o Mapa de Cobertura em PDF e/ou a planilha Excel para conferência e registro."
       />
 
-      {/* ETAPA 1 — Seleção */}
-      {etapa === "selecao" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <label
-            htmlFor="input-pdf"
-            className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-card p-10 text-center transition-all hover:border-emerald-500 hover:bg-emerald-50/40"
-          >
-            <input
-              id="input-pdf"
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={(e) => handleArquivo(e, "pdf")}
-              disabled={processando}
-            />
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 text-red-600 transition-transform group-hover:scale-110">
-              <FileText className="h-8 w-8" />
-            </div>
-            <h3 className="font-display mt-4 text-lg font-bold">Importar Relatório PDF</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Mapa de Cobertura (.pdf)
-            </p>
-            <p className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-700">
-              <FileUp className="h-4 w-4" /> Selecionar arquivo
-            </p>
-          </label>
+      {/* Inputs ocultos */}
+      <input
+        type="file"
+        ref={inputPdfRef}
+        onChange={handleArquivoPdf}
+        accept=".pdf"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={inputExcelRef}
+        onChange={handleArquivoExcel}
+        accept=".xlsx,.xls"
+        className="hidden"
+      />
 
-          <label
-            htmlFor="input-excel"
-            className="group cursor-pointer rounded-2xl border-2 border-dashed border-slate-300 bg-card p-10 text-center transition-all hover:border-emerald-500 hover:bg-emerald-50/40"
-          >
-            <input
-              id="input-excel"
-              type="file"
-              accept=".xlsx,.xls"
-              className="hidden"
-              onChange={(e) => handleArquivo(e, "excel")}
-              disabled={processando}
-            />
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 transition-transform group-hover:scale-110">
-              <FileSpreadsheet className="h-8 w-8" />
-            </div>
-            <h3 className="font-display mt-4 text-lg font-bold">Importar Excel</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Planilha de coberturas (.xlsx, .xls)
-            </p>
-            <p className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-emerald-700">
-              <FileUp className="h-4 w-4" /> Selecionar arquivo
-            </p>
-          </label>
-
-          {processando && (
-            <div className="md:col-span-2 flex items-center justify-center gap-3 rounded-xl border bg-card p-8">
-              <Loader2 className="h-5 w-5 animate-spin text-emerald-700" />
-              <p className="text-sm font-medium">Processando arquivo...</p>
-            </div>
-          )}
-
-          <div className="md:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-5">
-            <h4 className="flex items-center gap-2 text-[13.5px] font-bold text-emerald-900">
-              <GitCompareArrows className="h-4 w-4" />
-              Conferência cruzada PDF × Excel
-            </h4>
-            <p className="mt-1 text-[13px] text-emerald-800/80 leading-relaxed">
-              Para cruzar os dados, importe primeiro o <strong>PDF</strong>. Na tela de prévia,
-              você poderá anexar o Excel do mesmo período para identificar coincidências,
-              registros exclusivos e divergências de valor, quantidade e classificação.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* ETAPA 2 — Prévia */}
-      {etapa === "previa" && (
-        <div className="space-y-5">
-          {/* Resumo */}
-          <div className="rounded-xl border bg-card p-5 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div className="flex items-center gap-3">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${tipoArquivo === "pdf" ? "bg-red-100 text-red-600" : "bg-emerald-100 text-emerald-700"}`}>
-                  {tipoArquivo === "pdf" ? <FileText className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
-                </div>
-                <div>
-                  <p className="text-[14px] font-bold">{nomeArquivo}</p>
-                  <p className="text-[12px] text-muted-foreground">
-                    {resultadoPdf?.filial || resultadoExcel?.filial}
-                    {resultadoPdf?.periodo && ` • Período: ${resultadoPdf.periodo}`}
-                  </p>
-                </div>
-              </div>
-              <BadgeOrigem origem={tipoArquivo} />
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              {[
-                { rotulo: "Registros", valor: String(registros.length) },
-                { rotulo: "Unidades/horas", valor: formatarNumero(totalQtd) },
-                { rotulo: "Valor total", valor: formatarMoeda(totalValor) },
-                { rotulo: "Novos", valor: String(analiseDuplicidade.novos), cor: "text-emerald-700" },
-                { rotulo: "Duplicados", valor: String(analiseDuplicidade.duplicados), cor: analiseDuplicidade.duplicados > 0 ? "text-amber-600" : undefined },
-                {
-                  rotulo: "Revisão necessária",
-                  valor: String(registros.filter((r) => r.revisaoNecessaria).length),
-                  cor: registros.some((r) => r.revisaoNecessaria) ? "text-red-600" : undefined,
-                },
-              ].map((k) => (
-                <div key={k.rotulo} className="rounded-lg bg-slate-50 border p-3 text-center">
-                  <p className={`num font-display text-xl font-bold ${k.cor || "text-foreground"}`}>{k.valor}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">{k.rotulo}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Validação com total do PDF */}
-            {resultadoPdf && resultadoPdf.totalGeralValor > 0 && (
-              <div className={`mt-4 flex items-center gap-2.5 rounded-lg border px-4 py-3 text-[13px] font-medium ${
-                Math.abs(totalValor - resultadoPdf.totalGeralValor) < 0.05
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-amber-200 bg-amber-50 text-amber-800"
-              }`}>
-                {Math.abs(totalValor - resultadoPdf.totalGeralValor) < 0.05 ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                )}
-                <span>
-                  Total do relatório: <strong className="num">{formatarNumero(resultadoPdf.totalGeralQtd)} unidades</strong> /{" "}
-                  <strong className="num">{formatarMoeda(resultadoPdf.totalGeralValor)}</strong>
-                  {Math.abs(totalValor - resultadoPdf.totalGeralValor) < 0.05
-                    ? " — Conferido e batendo com a importação."
-                    : ` — Diferença de ${formatarMoeda(Math.abs(totalValor - resultadoPdf.totalGeralValor))} detectada.`}
-                </span>
-              </div>
-            )}
-
-            {/* Avisos do parser */}
-            {((resultadoPdf?.avisos.length || 0) > 0 || (resultadoExcel?.avisos.length || 0) > 0) && (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                {(resultadoPdf?.avisos || resultadoExcel?.avisos || []).map((a, i) => (
-                  <p key={i} className="text-[12.5px] text-amber-800 flex items-center gap-2">
-                    <AlertTriangle className="h-3.5 w-3.5" /> {a}
-                  </p>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Tabela de prévia */}
-          <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-            <div className="px-5 py-3.5 border-b bg-slate-50/60">
-              <h3 className="text-[14px] font-bold">Registros encontrados</h3>
-            </div>
-            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
-              <table className="w-full text-[12.5px]">
-                <thead className="sticky top-0 bg-slate-50 z-10">
-                  <tr className="border-b text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-2.5 font-semibold">Data</th>
-                    <th className="px-4 py-2.5 font-semibold">Substituto</th>
-                    <th className="px-4 py-2.5 font-semibold">Substituído</th>
-                    <th className="px-4 py-2.5 font-semibold">Posto</th>
-                    <th className="px-4 py-2.5 font-semibold">Motivo</th>
-                    <th className="px-4 py-2.5 font-semibold text-center">Cl.</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Qtd</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Valor</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {registros.slice(0, 200).map((r, i) => (
-                    <tr key={i} className={`border-b last:border-0 hover:bg-slate-50/70 ${r.revisaoNecessaria ? "bg-red-50/50" : ""}`}>
-                      <td className="px-4 py-2 num whitespace-nowrap">{r.data}</td>
-                      <td className="px-4 py-2 max-w-[180px] truncate font-medium">{r.substituto}</td>
-                      <td className="px-4 py-2 max-w-[160px] truncate text-muted-foreground">{r.colaborador}</td>
-                      <td className="px-4 py-2 max-w-[200px] truncate">{r.posto}</td>
-                      <td className="px-4 py-2 max-w-[150px] truncate">{r.motivo}</td>
-                      <td className="px-4 py-2 text-center num">{r.classificacao || "—"}</td>
-                      <td className="px-4 py-2 text-right num">{formatarNumero(r.quantidade)}</td>
-                      <td className="px-4 py-2 text-right num">{formatarMoeda(r.valorUnitario)}</td>
-                      <td className="px-4 py-2 text-right num font-semibold">{formatarMoeda(r.totalGeral)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {registros.length > 200 && (
-                <p className="px-4 py-3 text-center text-[12px] text-muted-foreground border-t">
-                  Exibindo 200 de {registros.length} registros.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Ações */}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" onClick={reiniciar} className="gap-2">
-              <ArrowLeft className="h-4 w-4" /> Cancelar
-            </Button>
-            {tipoArquivo === "pdf" && (
-              <Button variant="outline" onClick={iniciarCruzamento} disabled={processando} className="gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50">
-                <GitCompareArrows className="h-4 w-4" /> Cruzar com Excel
-              </Button>
-            )}
-            <div className="flex-1" />
-            <Button
-              onClick={() => confirmarImportacao(true)}
-              disabled={salvando || analiseDuplicidade.novos === 0}
-              className="gap-2 bg-[oklch(0.38_0.09_162)] hover:bg-[oklch(0.33_0.09_162)] text-white"
-            >
-              {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Confirmar importação ({analiseDuplicidade.novos} novos)
-            </Button>
-          </div>
-          {analiseDuplicidade.duplicados > 0 && (
-            <p className="text-[12.5px] text-amber-700 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
-              {analiseDuplicidade.duplicados} registro(s) já existem no banco e serão ignorados automaticamente (sem duplicação).
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ETAPA 3 — Cruzamento */}
-      {etapa === "cruzamento" && conferencia && (
-        <div className="space-y-5">
-          <div className="rounded-xl border bg-card p-5 shadow-sm">
-            <h3 className="font-display text-[16px] font-bold mb-4 flex items-center gap-2">
-              <GitCompareArrows className="h-5 w-5 text-emerald-700" />
-              Resultado da conferência cruzada
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              {[
-                { rotulo: "Coincidentes", valor: conferencia.coincidentes, cor: "text-emerald-700" },
-                { rotulo: "Somente no PDF", valor: conferencia.somentePdf.length, cor: conferencia.somentePdf.length ? "text-amber-600" : undefined },
-                { rotulo: "Somente no Excel", valor: conferencia.somenteExcel.length, cor: conferencia.somenteExcel.length ? "text-amber-600" : undefined },
-                { rotulo: "Diverg. valor", valor: conferencia.divergenciaValor.length, cor: conferencia.divergenciaValor.length ? "text-red-600" : undefined },
-                { rotulo: "Diverg. quantidade", valor: conferencia.divergenciaQuantidade.length, cor: conferencia.divergenciaQuantidade.length ? "text-red-600" : undefined },
-                { rotulo: "Diverg. classificação", valor: conferencia.divergenciaClassificacao.length, cor: conferencia.divergenciaClassificacao.length ? "text-red-600" : undefined },
-              ].map((k) => (
-                <div key={k.rotulo} className="rounded-lg bg-slate-50 border p-3 text-center">
-                  <p className={`num font-display text-xl font-bold ${k.cor || "text-foreground"}`}>{k.valor}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">{k.rotulo}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Detalhes das divergências */}
-          {[...conferencia.divergenciaValor, ...conferencia.divergenciaQuantidade, ...conferencia.divergenciaClassificacao].length > 0 && (
-            <div className="rounded-xl border border-red-200 bg-card shadow-sm overflow-hidden">
-              <div className="px-5 py-3.5 border-b bg-red-50/60">
-                <h3 className="text-[14px] font-bold text-red-800">Divergências encontradas</h3>
-              </div>
-              <div className="divide-y">
-                {[...conferencia.divergenciaValor, ...conferencia.divergenciaQuantidade, ...conferencia.divergenciaClassificacao].map((d, i) => (
-                  <div key={i} className="px-5 py-3.5 flex flex-wrap items-center gap-x-6 gap-y-1">
-                    <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 uppercase">
-                      {d.tipo === "valor" ? "Divergência de valor" : d.tipo === "quantidade" ? "Divergência de quantidade" : "Divergência de classificação"}
-                    </span>
-                    <span className="text-[13px] font-semibold">{d.colaborador}</span>
-                    <span className="text-[12.5px] text-muted-foreground num">{d.data}</span>
-                    <span className="text-[12.5px] text-muted-foreground max-w-[220px] truncate">{d.posto}</span>
-                    <span className="text-[12.5px] font-medium text-red-700 num">{d.descricao}</span>
-                    {d.diferenca !== undefined && d.tipo === "valor" && (
-                      <span className="text-[12.5px] font-bold text-red-800 num">Diferença: {formatarMoeda(d.diferenca)}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Somente PDF / Somente Excel */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b bg-amber-50/60">
-                <h3 className="text-[13.5px] font-bold text-amber-800">Somente no PDF ({conferencia.somentePdf.length})</h3>
-              </div>
-              <div className="max-h-[260px] overflow-y-auto divide-y">
-                {conferencia.somentePdf.length === 0 && <p className="px-5 py-4 text-[13px] text-muted-foreground">Nenhum registro exclusivo do PDF.</p>}
-                {conferencia.somentePdf.map((r, i) => (
-                  <div key={i} className="px-5 py-2.5 text-[12.5px] flex flex-wrap gap-x-4">
-                    <span className="num">{r.data}</span>
-                    <span className="font-medium max-w-[180px] truncate">{r.substituto}</span>
-                    <span className="text-muted-foreground max-w-[160px] truncate">{r.posto}</span>
-                    <span className="num ml-auto font-semibold">{formatarMoeda(r.totalGeral)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b bg-amber-50/60">
-                <h3 className="text-[13.5px] font-bold text-amber-800">Somente no Excel ({conferencia.somenteExcel.length})</h3>
-              </div>
-              <div className="max-h-[260px] overflow-y-auto divide-y">
-                {conferencia.somenteExcel.length === 0 && <p className="px-5 py-4 text-[13px] text-muted-foreground">Nenhum registro exclusivo do Excel.</p>}
-                {conferencia.somenteExcel.map((r, i) => (
-                  <div key={i} className="px-5 py-2.5 text-[12.5px] flex flex-wrap gap-x-4">
-                    <span className="num">{r.data}</span>
-                    <span className="font-medium max-w-[180px] truncate">{r.substituto}</span>
-                    <span className="text-muted-foreground max-w-[160px] truncate">{r.posto}</span>
-                    <span className="num ml-auto font-semibold">{formatarMoeda(r.totalGeral)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" onClick={reiniciar} className="gap-2">
-              <ArrowLeft className="h-4 w-4" /> Cancelar
-            </Button>
-            <div className="flex-1" />
-            <Button
-              onClick={() => confirmarImportacao(true)}
-              disabled={salvando}
-              className="gap-2 bg-[oklch(0.38_0.09_162)] hover:bg-[oklch(0.33_0.09_162)] text-white"
-            >
-              {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-              Confirmar e salvar dados
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ETAPA 4 — Concluído */}
-      {etapa === "concluido" && (
-        <div className="rounded-2xl border bg-card p-12 text-center shadow-sm">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100">
-            <CheckCircle2 className="h-9 w-9 text-emerald-700" />
-          </div>
-          <h3 className="font-display mt-5 text-xl font-bold">Importação concluída!</h3>
-          <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto">
-            Os dados foram armazenados com sucesso e o dashboard já está atualizado.
-            Registros duplicados foram ignorados automaticamente.
+      {/* Barra de progresso */}
+      {carregando && (
+        <div className="space-y-2">
+          <Progress value={progresso} className="h-2" />
+          <p className="text-sm text-muted-foreground text-center">
+            Processando arquivo...
           </p>
-          <div className="mt-6 flex items-center justify-center gap-3">
-            <Button variant="outline" onClick={reiniciar}>Nova importação</Button>
-            <Button asChild className="bg-[oklch(0.38_0.09_162)] hover:bg-[oklch(0.33_0.09_162)] text-white">
-              <a href="/">Ir para o Dashboard</a>
-            </Button>
-          </div>
         </div>
       )}
+
+      {/* Etapa: Selecionar arquivos */}
+      {etapa === "selecionar" && !carregando && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Card PDF */}
+          <Card className="border-2 border-dashed border-red-200 bg-red-50/30 hover:border-red-300 transition-colors">
+            <CardHeader className="text-center pb-2">
+              <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                <FileText className="h-8 w-8 text-red-600" />
+              </div>
+              <CardTitle className="text-xl">Importar Relatório PDF</CardTitle>
+              <CardDescription>
+                Mapa de Cobertura (.pdf)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-center">
+              <Button
+                onClick={handleSelecionarPdf}
+                variant="outline"
+                className="gap-2 border-red-300 text-red-700 hover:bg-red-50"
+              >
+                <Upload className="h-4 w-4" />
+                Selecionar arquivo
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Card Excel */}
+          <Card className="border-2 border-dashed border-emerald-200 bg-emerald-50/30 hover:border-emerald-300 transition-colors">
+            <CardHeader className="text-center pb-2">
+              <div className="mx-auto w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mb-4">
+                <FileSpreadsheet className="h-8 w-8 text-emerald-600" />
+              </div>
+              <CardTitle className="text-xl">Importar Excel</CardTitle>
+              <CardDescription>
+                Planilha de coberturas (.xlsx, .xls)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-center">
+              <Button
+                onClick={handleSelecionarExcel}
+                variant="outline"
+                className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              >
+                <Upload className="h-4 w-4" />
+                Selecionar arquivo
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Etapa: Prévia do PDF */}
+      {etapa === "previa" && resultadoPdf && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-red-600" />
+                  Prévia do PDF
+                </CardTitle>
+                <CardDescription>
+                  {arquivoPdf?.name} • {resultadoPdf.filial} • {resultadoPdf.periodo}
+                </CardDescription>
+              </div>
+              <Badge variant={resultadoPdf.conferido ? "default" : "destructive"}>
+                {resultadoPdf.conferido ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Conferido
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    Divergência
+                  </>
+                )}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Resumo */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-slate-900">{resultadoPdf.registros.length}</p>
+                <p className="text-sm text-muted-foreground">Registros</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-slate-900">{formatarNumero(resultadoPdf.totalCalculadoQtd)}</p>
+                <p className="text-sm text-muted-foreground">Unidades</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-emerald-700">{formatarMoeda(resultadoPdf.totalCalculadoValor)}</p>
+                <p className="text-sm text-muted-foreground">Valor Total</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-slate-900">{formatarNumero(resultadoPdf.totalGeralQtd)}</p>
+                <p className="text-sm text-muted-foreground">Total Relatório</p>
+              </div>
+            </div>
+
+            {/* Alerta de divergência */}
+            {!resultadoPdf.conferido && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Divergência nos totais</AlertTitle>
+                <AlertDescription>
+                  O total calculado ({formatarNumero(resultadoPdf.totalCalculadoQtd)} unidades / {formatarMoeda(resultadoPdf.totalCalculadoValor)}) 
+                  difere do total do relatório ({formatarNumero(resultadoPdf.totalGeralQtd)} unidades / {formatarMoeda(resultadoPdf.totalGeralValor)}).
+                  Verifique se o PDF está completo.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Tabela de registros */}
+            <div className="border rounded-lg overflow-hidden">
+              <div className="max-h-[400px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold">Data</th>
+                      <th className="px-4 py-2 text-left font-semibold">Substituto</th>
+                      <th className="px-4 py-2 text-left font-semibold">Posto</th>
+                      <th className="px-4 py-2 text-left font-semibold">Motivo</th>
+                      <th className="px-4 py-2 text-center font-semibold">Cl.</th>
+                      <th className="px-4 py-2 text-right font-semibold">Qtd</th>
+                      <th className="px-4 py-2 text-right font-semibold">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultadoPdf.registros.map((r, i) => (
+                      <tr key={i} className="border-t hover:bg-slate-50">
+                        <td className="px-4 py-2">{r.data}</td>
+                        <td className="px-4 py-2 max-w-[150px] truncate">{r.substituto}</td>
+                        <td className="px-4 py-2 max-w-[150px] truncate">{r.posto}</td>
+                        <td className="px-4 py-2 max-w-[120px] truncate">{r.motivo}</td>
+                        <td className="px-4 py-2 text-center">{r.classificacao}</td>
+                        <td className="px-4 py-2 text-right">{formatarNumero(r.quantidade)}</td>
+                        <td className="px-4 py-2 text-right font-medium">{formatarMoeda(r.totalGeral)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Botões */}
+            <div className="flex justify-between pt-4">
+              <Button variant="outline" onClick={handleCancelar}>
+                Cancelar
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleCruzarComExcel}
+                  className="gap-2"
+                >
+                  <GitCompareArrows className="h-4 w-4" />
+                  Cruzar com Excel
+                </Button>
+                <Button
+                  onClick={handleConfirmarImportacao}
+                  className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Confirmar Importação
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Etapa: Cruzamento */}
+      {etapa === "cruzamento" && resultadoCruzamento && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitCompareArrows className="h-5 w-5 text-blue-600" />
+              Conferência Cruzada PDF × Excel
+            </CardTitle>
+            <CardDescription>
+              Comparando registros do PDF com a planilha Excel
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Resumo do cruzamento */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-emerald-50 rounded-lg p-4 text-center border border-emerald-200">
+                <p className="text-2xl font-bold text-emerald-700">{resultadoCruzamento.coincidentes.length}</p>
+                <p className="text-sm text-emerald-600">Coincidentes</p>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-4 text-center border border-amber-200">
+                <p className="text-2xl font-bold text-amber-700">{resultadoCruzamento.somentePdf.length}</p>
+                <p className="text-sm text-amber-600">Somente PDF</p>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-4 text-center border border-amber-200">
+                <p className="text-2xl font-bold text-amber-700">{resultadoCruzamento.somenteExcel.length}</p>
+                <p className="text-sm text-amber-600">Somente Excel</p>
+              </div>
+              <div className="bg-red-50 rounded-lg p-4 text-center border border-red-200">
+                <p className="text-2xl font-bold text-red-700">{resultadoCruzamento.divergencias.length}</p>
+                <p className="text-sm text-red-600">Divergências</p>
+              </div>
+            </div>
+
+            {/* Tabs com detalhes */}
+            <Tabs defaultValue="coincidentes">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="coincidentes">Coincidentes</TabsTrigger>
+                <TabsTrigger value="somentePdf">Somente PDF</TabsTrigger>
+                <TabsTrigger value="somenteExcel">Somente Excel</TabsTrigger>
+                <TabsTrigger value="divergencias">Divergências</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="coincidentes" className="mt-4">
+                <TabelaRegistros registros={resultadoCruzamento.coincidentes} />
+              </TabsContent>
+              
+              <TabsContent value="somentePdf" className="mt-4">
+                <TabelaRegistros registros={resultadoCruzamento.somentePdf} />
+              </TabsContent>
+              
+              <TabsContent value="somenteExcel" className="mt-4">
+                <TabelaRegistros registros={resultadoCruzamento.somenteExcel} />
+              </TabsContent>
+              
+              <TabsContent value="divergencias" className="mt-4">
+                <TabelaDivergencias divergencias={resultadoCruzamento.divergencias} />
+              </TabsContent>
+            </Tabs>
+
+            {/* Botões */}
+            <div className="flex justify-between pt-4">
+              <Button variant="outline" onClick={handleCancelar}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleConfirmarImportacao}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Confirmar Importação ({resultadoCruzamento.coincidentes.length + resultadoCruzamento.somentePdf.length + resultadoCruzamento.somenteExcel.length} registros)
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Informações sobre conferência cruzada */}
+      {etapa === "selecionar" && !carregando && (
+        <Alert>
+          <GitCompareArrows className="h-4 w-4" />
+          <AlertTitle>Conferência cruzada PDF × Excel</AlertTitle>
+          <AlertDescription>
+            Para cruzar os dados, importe primeiro o PDF. Na tela de prévia, você poderá anexar o Excel do mesmo período 
+            para identificar coincidências, registros exclusivos e divergências de valor, quantidade e classificação.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
+// ---- Componentes auxiliares ----
+
+function TabelaRegistros({ registros }: { registros: RegistroImportado[] }) {
+  if (!registros || registros.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        Nenhum registro nesta categoria.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <div className="max-h-[300px] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 sticky top-0">
+            <tr>
+              <th className="px-4 py-2 text-left font-semibold">Data</th>
+              <th className="px-4 py-2 text-left font-semibold">Substituto</th>
+              <th className="px-4 py-2 text-left font-semibold">Posto</th>
+              <th className="px-4 py-2 text-left font-semibold">Motivo</th>
+              <th className="px-4 py-2 text-center font-semibold">Cl.</th>
+              <th className="px-4 py-2 text-right font-semibold">Qtd</th>
+              <th className="px-4 py-2 text-right font-semibold">Valor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {registros.map((r, i) => (
+              <tr key={i} className="border-t hover:bg-slate-50">
+                <td className="px-4 py-2">{r.data}</td>
+                <td className="px-4 py-2 max-w-[150px] truncate">{r.substituto}</td>
+                <td className="px-4 py-2 max-w-[150px] truncate">{r.posto}</td>
+                <td className="px-4 py-2 max-w-[120px] truncate">{r.motivo}</td>
+                <td className="px-4 py-2 text-center">{r.classificacao}</td>
+                <td className="px-4 py-2 text-right">{formatarNumero(r.quantidade)}</td>
+                <td className="px-4 py-2 text-right font-medium">{formatarMoeda(r.totalGeral)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TabelaDivergencias({ divergencias }: { divergencias: { pdf: RegistroImportado; excel: RegistroImportado; diferencas: string[] }[] }) {
+  if (!divergencias || divergencias.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        Nenhuma divergência encontrada.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      <div className="max-h-[300px] overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 sticky top-0">
+            <tr>
+              <th className="px-4 py-2 text-left font-semibold">Data</th>
+              <th className="px-4 py-2 text-left font-semibold">Substituto</th>
+              <th className="px-4 py-2 text-left font-semibold">Divergências</th>
+              <th className="px-4 py-2 text-right font-semibold">PDF</th>
+              <th className="px-4 py-2 text-right font-semibold">Excel</th>
+            </tr>
+          </thead>
+          <tbody>
+            {divergencias.map((d, i) => (
+              <tr key={i} className="border-t hover:bg-slate-50">
+                <td className="px-4 py-2">{d.pdf.data}</td>
+                <td className="px-4 py-2 max-w-[150px] truncate">{d.pdf.substituto}</td>
+                <td className="px-4 py-2">
+                  <div className="flex flex-wrap gap-1">
+                    {d.diferencas.map((diff, j) => (
+                      <Badge key={j} variant="destructive" className="text-xs">
+                        {diff}
+                      </Badge>
+                    ))}
+                  </div>
+                </td>
+                <td className="px-4 py-2 text-right">{formatarMoeda(d.pdf.totalGeral)}</td>
+                <td className="px-4 py-2 text-right">{formatarMoeda(d.excel.totalGeral)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
